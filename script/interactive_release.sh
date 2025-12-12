@@ -4,27 +4,19 @@ set -e
 
 echo "🚀 Starting interactive release process..."
 
-# # Run lint and format checks
-# echo "🔍 Running lint checks..."
-# if ! pnpm lint; then
-#     echo "❌ Lint errors found. Please fix them before releasing."
-#     exit 1
-# fi
-
 echo "🎨 Running format checks..."
 if ! pnpm format:check; then
     echo "❌ Formatting issues found. Run 'pnpm format' to fix them."
     exit 1
 fi
 
-echo "✅ All lint and format checks passed!"
+echo "✅ All format checks passed!"
 
 echo "Running pnpm tsc..."
 pnpm exec tsc
 
 # Step 0: Pull latest from origin/main
 echo "📥 Pulling latest changes from origin/main..."
-git checkout main
 git pull origin main
 
 # Step 1: Bump version
@@ -37,17 +29,17 @@ done
 if [[ "$bump_type" != "skip" ]]; then
     # Store the current version before bumping
     current_version=$(awk -F'"' '/"version": ".+"/{ print $4; exit; }' package.json)
-    
+
     ./script/bump_version.sh "$bump_type"
-    
+
     # Get the new version after bumping
     new_version=$(awk -F'"' '/"version": ".+"/{ print $4; exit; }' package.json)
     echo "Version bumped from $current_version to $new_version"
-    
+
     # Also update the version in dev and qa config files
     sed -i '' "s/\"version\": \"$current_version\"/\"version\": \"$new_version\"/" src-tauri/tauri.dev.conf.json
     sed -i '' "s/\"version\": \"$current_version\"/\"version\": \"$new_version\"/" src-tauri/tauri.qa.conf.json
-    
+
     read -p "Do you want to continue with this version? (yes/no) [yes]: " confirm
     if [[ "$confirm" != "yes" && "$confirm" != "" ]]; then
         echo "Undoing version bump..."
@@ -60,20 +52,18 @@ if [[ "$bump_type" != "skip" ]]; then
         exit 1
     fi
 
-    # Step 2: Push to main
-    echo "📤 Pushing changes to main..."
+    # Step 2: Commit and push version bump to main
+    echo "📤 Committing version bump..."
     git add package.json src-tauri/tauri.conf.json src-tauri/tauri.dev.conf.json src-tauri/tauri.qa.conf.json
-    git commit -m "Bump version: $bump_type"
+    git commit -m "Bump version to $new_version"
     git push origin main
 else
     echo "Skipping version bump."
 fi
 
-# Step 3: Run release script
+# Step 3: Run release script (creates and pushes tag)
 echo "🚀 Running release script..."
 ./script/release.sh
 
-# Step 4: Open the changelog 
-open "https://github.com/meltylabs/chorus-releases/edit/main/CHANGELOG.md"
-
 echo "✅ Interactive release process completed!"
+echo "📝 Don't forget to update the changelog after the release is published."

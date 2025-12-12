@@ -1,20 +1,27 @@
 #!/bin/bash
+set -e
+
 echo "🏋️ Compiling..."
 npx tsc || { echo "❌ TypeScript compilation failed"; exit 1; }
 
-echo "👀 Checking out main..."
-git checkout main || { echo "❌ Failed to checkout main"; exit 1; }
+# Get the version from tauri.conf.json
+VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+TAG="v$VERSION"
 
-echo "🫡 Pulling latest changes from main..."
-git pull origin main || { echo "❌ Failed to pull from main"; exit 1; }
+echo "📦 Creating release for version $VERSION..."
 
-echo "👀 Checking out release..."
-git checkout release || { echo "❌ Failed to checkout release"; exit 1; }
+# Check if tag already exists
+if git rev-parse "$TAG" >/dev/null 2>&1; then
+    echo "❌ Tag $TAG already exists. Please bump the version first."
+    exit 1
+fi
 
-git pull origin main || { echo "❌ Failed to pull main into release"; exit 1; }
+# Create and push tag
+echo "🏷️ Creating tag $TAG..."
+git tag -a "$TAG" -m "Release $TAG"
 
-git push origin release || { echo "❌ Failed to push to release"; exit 1; }
+echo "🚀 Pushing tag to origin..."
+git push origin "$TAG"
 
-git checkout main || { echo "❌ Failed to return to main"; exit 1; }
-
-echo "🤝 Done... check status at https://github.com/meltylabs/chorus/actions"
+echo "✅ Done! Release workflow will start automatically."
+echo "👀 Check status at https://github.com/meltylabs/chorus-oss/actions"
