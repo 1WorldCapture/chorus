@@ -1,20 +1,23 @@
 import { getStore } from "@core/infra/Store";
 import { emit } from "@tauri-apps/api/event";
 
+export type CustomProviderConfig = {
+    id: string; // uuid
+    name: string; // display name
+    baseUrl: string; // user-provided base URL (recommended: no trailing slash)
+    apiKey: string; // user-provided API key
+    createdAt?: string;
+    updatedAt?: string;
+};
+
 export interface Settings {
     defaultEditor: string;
     sansFont: string;
     monoFont: string;
     autoConvertLongText: boolean;
     autoScrapeUrls: boolean;
-    apiKeys?: {
-        anthropic?: string;
-        openai?: string;
-        google?: string;
-        perplexity?: string;
-        openrouter?: string;
-        firecrawl?: string;
-    };
+    apiKeys?: Record<string, string>;
+    customProviders?: CustomProviderConfig[];
     quickChat?: {
         enabled?: boolean;
         modelConfigId?: string;
@@ -48,6 +51,7 @@ export class SettingsManager {
                 autoConvertLongText: true,
                 autoScrapeUrls: true,
                 apiKeys: {},
+                customProviders: [],
                 quickChat: {
                     enabled: true,
                     modelConfigId: "anthropic::claude-3-5-sonnet-latest",
@@ -71,6 +75,7 @@ export class SettingsManager {
                 autoConvertLongText: true,
                 autoScrapeUrls: true,
                 apiKeys: {},
+                customProviders: [],
                 quickChat: {
                     enabled: true,
                     modelConfigId: "anthropic::claude-3-5-sonnet-latest",
@@ -100,5 +105,33 @@ export class SettingsManager {
             console.error("Failed to get Chorus token:", error);
             return null;
         }
+    }
+
+    public async getCustomProviders(): Promise<CustomProviderConfig[]> {
+        const settings = await this.get();
+        return settings.customProviders ?? [];
+    }
+
+    public async upsertCustomProvider(
+        provider: CustomProviderConfig,
+    ): Promise<void> {
+        const settings = await this.get();
+        const existing = settings.customProviders ?? [];
+        const next = existing.some((p) => p.id === provider.id)
+            ? existing.map((p) => (p.id === provider.id ? provider : p))
+            : [...existing, provider];
+        await this.set({
+            ...settings,
+            customProviders: next,
+        });
+    }
+
+    public async deleteCustomProvider(providerId: string): Promise<void> {
+        const settings = await this.get();
+        const existing = settings.customProviders ?? [];
+        await this.set({
+            ...settings,
+            customProviders: existing.filter((p) => p.id !== providerId),
+        });
     }
 }

@@ -3,21 +3,134 @@ import { Label } from "./ui/label";
 import { ProviderName } from "@core/chorus/Models";
 import { ProviderLogo } from "./ui/provider-logo";
 import { Card } from "./ui/card";
-import { CheckIcon, FlameIcon } from "lucide-react";
+import {
+    CheckIcon,
+    FlameIcon,
+    PlusIcon,
+    Trash2Icon,
+    PencilIcon,
+} from "lucide-react";
 import { useState } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import {
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "./ui/dialog";
+import { Button } from "./ui/button";
+import { v4 as uuidv4 } from "uuid";
+import type { CustomProviderConfig } from "@core/utilities/Settings";
 
 interface ApiKeysFormProps {
     apiKeys: Record<string, string>;
     onApiKeyChange: (provider: string, value: string) => void;
+    customProviders: CustomProviderConfig[];
+    onUpsertCustomProvider: (provider: CustomProviderConfig) => void;
+    onDeleteCustomProvider: (providerId: string) => void;
 }
 
 export default function ApiKeysForm({
     apiKeys,
     onApiKeyChange,
+    customProviders,
+    onUpsertCustomProvider,
+    onDeleteCustomProvider,
 }: ApiKeysFormProps) {
     const [selectedProvider, setSelectedProvider] = useState<string | null>(
         null,
     );
+
+    const [customProviderDialogOpen, setCustomProviderDialogOpen] =
+        useState(false);
+    const [editingCustomProviderId, setEditingCustomProviderId] = useState<
+        string | null
+    >(null);
+    const editingCustomProvider =
+        customProviders.find((p) => p.id === editingCustomProviderId) ?? null;
+
+    const [customProviderName, setCustomProviderName] = useState("");
+    const [customProviderBaseUrl, setCustomProviderBaseUrl] = useState("");
+    const [customProviderApiKey, setCustomProviderApiKey] = useState("");
+    const [customProviderErrors, setCustomProviderErrors] = useState<{
+        name?: string;
+        baseUrl?: string;
+        apiKey?: string;
+    }>({});
+
+    const openCreateCustomProviderDialog = () => {
+        setSelectedProvider(null);
+        setEditingCustomProviderId(null);
+        setCustomProviderName("");
+        setCustomProviderBaseUrl("");
+        setCustomProviderApiKey("");
+        setCustomProviderErrors({});
+        setCustomProviderDialogOpen(true);
+    };
+
+    const openEditCustomProviderDialog = (provider: CustomProviderConfig) => {
+        setSelectedProvider(null);
+        setEditingCustomProviderId(provider.id);
+        setCustomProviderName(provider.name);
+        setCustomProviderBaseUrl(provider.baseUrl);
+        setCustomProviderApiKey(provider.apiKey);
+        setCustomProviderErrors({});
+        setCustomProviderDialogOpen(true);
+    };
+
+    const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
+
+    const validateCustomProvider = () => {
+        const errors: {
+            name?: string;
+            baseUrl?: string;
+            apiKey?: string;
+        } = {};
+
+        if (!customProviderName.trim()) {
+            errors.name = "Name is required";
+        }
+
+        const baseUrl = normalizeBaseUrl(customProviderBaseUrl);
+        if (!baseUrl) {
+            errors.baseUrl = "Base URL is required";
+        } else {
+            try {
+                const url = new URL(baseUrl);
+                if (url.protocol !== "http:" && url.protocol !== "https:") {
+                    errors.baseUrl = "Base URL must start with http:// or https://";
+                }
+            } catch {
+                errors.baseUrl = "Invalid URL";
+            }
+        }
+
+        if (!customProviderApiKey.trim()) {
+            errors.apiKey = "API key is required";
+        }
+
+        setCustomProviderErrors(errors);
+        return Object.keys(errors).length === 0;
+    };
+
+    const handleSaveCustomProvider = () => {
+        if (!validateCustomProvider()) return;
+
+        const now = new Date().toISOString();
+        const baseUrl = normalizeBaseUrl(customProviderBaseUrl);
+        const provider: CustomProviderConfig = {
+            id: editingCustomProvider?.id ?? uuidv4(),
+            name: customProviderName.trim(),
+            baseUrl,
+            apiKey: customProviderApiKey,
+            createdAt: editingCustomProvider?.createdAt ?? now,
+            updatedAt: now,
+        };
+
+        onUpsertCustomProvider(provider);
+        setCustomProviderDialogOpen(false);
+    };
 
     const providers = [
         {
@@ -95,6 +208,42 @@ export default function ApiKeysForm({
                         )}
                     </Card>
                 ))}
+
+                {customProviders.map((provider) => (
+                    <Card
+                        key={provider.id}
+                        className="relative p-6 cursor-pointer hover:bg-muted transition-colors"
+                        onClick={() => openEditCustomProviderDialog(provider)}
+                    >
+                        <div className="flex flex-col items-center gap-2 text-center">
+                            <ProviderLogo provider="custom" size="lg" />
+                            <span className="font-medium truncate w-full">
+                                {provider.name}
+                            </span>
+                            <span className="text-xs text-muted-foreground truncate w-full">
+                                {provider.baseUrl}
+                            </span>
+                        </div>
+                        {provider.apiKey && provider.baseUrl && (
+                            <div className="absolute top-2 right-2">
+                                <CheckIcon className="w-4 h-4 text-green-500" />
+                            </div>
+                        )}
+                        <div className="absolute bottom-2 right-2 text-muted-foreground/60">
+                            <PencilIcon className="w-4 h-4" />
+                        </div>
+                    </Card>
+                ))}
+
+                <Card
+                    className="p-6 cursor-pointer hover:bg-muted transition-colors"
+                    onClick={openCreateCustomProviderDialog}
+                >
+                    <div className="flex flex-col items-center gap-2 text-center">
+                        <PlusIcon className="w-5 h-5" />
+                        <span className="font-medium">Custom Provider</span>
+                    </div>
+                </Card>
             </div>
 
             {selectedProvider && (
@@ -142,6 +291,126 @@ export default function ApiKeysForm({
                     </div>
                 </div>
             )}
+
+            <DialogPrimitive.Root
+                open={customProviderDialogOpen}
+                onOpenChange={(open) => {
+                    setCustomProviderDialogOpen(open);
+                    if (!open) setCustomProviderErrors({});
+                }}
+            >
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>
+                            {editingCustomProvider
+                                ? "Edit Custom Provider"
+                                : "Add Custom Provider"}
+                        </DialogTitle>
+                        <DialogDescription>
+                            Configure an OpenAI-compatible provider. Chorus will fetch models via{" "}
+                            <span className="font-mono">/models</span> or{" "}
+                            <span className="font-mono">/v1/models</span>, and chat via{" "}
+                            <span className="font-mono">/v1/chat/completions</span>.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="custom-provider-name">Name</Label>
+                            <Input
+                                id="custom-provider-name"
+                                value={customProviderName}
+                                onChange={(e) =>
+                                    setCustomProviderName(e.target.value)
+                                }
+                                placeholder="My Provider"
+                            />
+                            {customProviderErrors.name && (
+                                <p className="text-sm text-destructive">
+                                    {customProviderErrors.name}
+                                </p>
+                            )}
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="custom-provider-baseurl">
+                                Base URL
+                            </Label>
+                            <Input
+                                id="custom-provider-baseurl"
+                                value={customProviderBaseUrl}
+                                onChange={(e) =>
+                                    setCustomProviderBaseUrl(e.target.value)
+                                }
+                                placeholder="http://localhost:1234/v1"
+                            />
+                            {customProviderErrors.baseUrl && (
+                                <p className="text-sm text-destructive">
+                                    {customProviderErrors.baseUrl}
+                                </p>
+                            )}
+                        </div>
+
+                        <div className="space-y-2">
+                            <Label htmlFor="custom-provider-apikey">
+                                API Key
+                            </Label>
+                            <Input
+                                id="custom-provider-apikey"
+                                type="password"
+                                value={customProviderApiKey}
+                                onChange={(e) =>
+                                    setCustomProviderApiKey(e.target.value)
+                                }
+                                placeholder="sk-..."
+                            />
+                            {customProviderErrors.apiKey && (
+                                <p className="text-sm text-destructive">
+                                    {customProviderErrors.apiKey}
+                                </p>
+                            )}
+                        </div>
+                    </div>
+
+                    <DialogFooter className="flex items-center justify-between gap-2">
+                        {editingCustomProvider ? (
+                            <Button
+                                type="button"
+                                variant="destructive"
+                                onClick={() => {
+                                    onDeleteCustomProvider(
+                                        editingCustomProvider.id,
+                                    );
+                                    setCustomProviderDialogOpen(false);
+                                }}
+                            >
+                                <Trash2Icon className="w-4 h-4 mr-2" />
+                                Delete
+                            </Button>
+                        ) : (
+                            <div />
+                        )}
+
+                        <div className="flex gap-2">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() =>
+                                    setCustomProviderDialogOpen(false)
+                                }
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                type="button"
+                                onClick={handleSaveCustomProvider}
+                            >
+                                Save
+                            </Button>
+                        </div>
+                    </DialogFooter>
+                </DialogContent>
+            </DialogPrimitive.Root>
         </div>
     );
 }

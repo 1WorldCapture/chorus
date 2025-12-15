@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { db } from "../DB";
-import { SettingsManager } from "@core/utilities/Settings";
+import {
+    CustomProviderConfig,
+    SettingsManager,
+} from "@core/utilities/Settings";
 import * as Models from "../Models";
 
 export const appMetadataKeys = {
@@ -180,6 +183,12 @@ export async function getApiKeys() {
     return (settings.apiKeys || {}) as Models.ApiKeys;
 }
 
+export async function getCustomProviders(): Promise<CustomProviderConfig[]> {
+    const settingsManager = SettingsManager.getInstance();
+    const settings = await settingsManager.get();
+    return settings.customProviders ?? [];
+}
+
 export async function getCustomBaseUrl() {
     const result = await db.select<{ value: string }[]>(
         "SELECT value FROM app_metadata WHERE key = 'custom_base_url'",
@@ -233,6 +242,13 @@ export function useApiKeys() {
     return useQuery({
         queryKey: ["apiKeys"],
         queryFn: getApiKeys,
+    });
+}
+
+export function useCustomProviders() {
+    return useQuery({
+        queryKey: ["customProviders"],
+        queryFn: getCustomProviders,
     });
 }
 

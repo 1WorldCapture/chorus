@@ -54,6 +54,8 @@ export function ProviderLogo({
             case "lmstudio":
                 // TODO: Add LMStudio logo
                 return <BoxIcon className="w-4 h-4" />;
+            case "custom":
+                return <BoxIcon className="w-4 h-4" />;
             case "meta":
                 return <RiMetaFill className="w-4 h-4" />;
             case "grok":

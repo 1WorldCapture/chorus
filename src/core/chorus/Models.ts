@@ -17,9 +17,16 @@ import { ollamaClient } from "./OllamaClient";
 import { ProviderOllama } from "./ModelProviders/ProviderOllama";
 import { ProviderLMStudio } from "./ModelProviders/ProviderLMStudio";
 import { ProviderGrok } from "./ModelProviders/ProviderGrok";
+import { ProviderCustomOpenAICompatible } from "./ModelProviders/ProviderCustomOpenAICompatible";
 import posthog from "posthog-js";
 import { UserTool, UserToolCall, UserToolResult } from "./Toolsets";
 import { Attachment } from "./api/AttachmentsAPI";
+import { SettingsManager } from "@core/utilities/Settings";
+import {
+    parseCustomProviderModelId,
+    isCustomProviderModelId,
+    normalizeBaseUrlForChat,
+} from "./CustomProviderUtils";
 
 /// ------------------------------------------------------------------------------------------------
 /// Basic Types
@@ -230,6 +237,7 @@ export type ProviderName =
     | "ollama"
     | "lmstudio"
     | "grok"
+    | "custom"
     | "meta";
 
 /**
@@ -244,6 +252,12 @@ export function getProviderLabel(modelId: string): string {
     if (providerParts.length > 1 && providerParts[0] === "openrouter") {
         const providerLabel = providerParts[1].split("/")[0];
         if (providerLabel) return providerLabel;
+    }
+
+    // Custom provider model IDs are "custom::<providerId>/<remoteModelId>"
+    if (providerParts.length > 1 && providerParts[0] === "custom") {
+        const providerId = providerParts[1].split("/")[0];
+        if (providerId) return providerId;
     }
     return getProviderName(modelId);
 }
@@ -266,6 +280,8 @@ export function getProviderName(modelId: string): ProviderName {
     return providerName as ProviderName;
 }
 
+export { isCustomProviderModelId, parseCustomProviderModelId, normalizeBaseUrlForChat };
+
 function getProvider(providerName: string): IProvider {
     switch (providerName) {
         case "openai":
@@ -284,6 +300,8 @@ function getProvider(providerName: string): IProvider {
             return new ProviderLMStudio();
         case "grok":
             return new ProviderGrok();
+        case "custom":
+            return new ProviderCustomOpenAICompatible();
         default:
             throw new Error(`Unknown provider: ${providerName}`);
     }
@@ -486,6 +504,180 @@ export async function downloadLMStudioModels(db: Database): Promise<void> {
     }
 }
 
+type OpenAICompatibleModelListResponse =
+    | { data: Array<{ id: string }> }
+    | { models: Array<{ id: string }> };
+
+function normalizeUrlNoTrailingSlash(url: string): string {
+    return url.trim().replace(/\/+$/, "");
+}
+
+function buildModelListCandidateUrls(baseUrl: string): string[] {
+    const normalized = normalizeUrlNoTrailingSlash(baseUrl);
+    if (normalized.endsWith("/v1")) {
+        // try standard OpenAI path, plus a fallback without /v1
+        return [normalized + "/models", normalized.slice(0, -3) + "/models"];
+    }
+    return [normalized + "/v1/models", normalized + "/models"];
+}
+
+async function fetchModelsFromOpenAICompatibleProvider(params: {
+    baseUrl: string;
+    apiKey: string;
+}): Promise<string[]> {
+    const urls = buildModelListCandidateUrls(params.baseUrl);
+    let lastError: string | null = null;
+
+    for (const url of urls) {
+        try {
+            const response = await fetch(url, {
+                method: "GET",
+                headers: {
+                    Authorization: `Bearer ${params.apiKey}`,
+                    "Content-Type": "application/json",
+                },
+            });
+            if (!response.ok) {
+                lastError = `HTTP ${response.status} ${response.statusText}`;
+                continue;
+            }
+
+            const json = (await response.json()) as OpenAICompatibleModelListResponse;
+            if ("data" in json && Array.isArray(json.data)) {
+                return json.data.map((m) => m.id).filter(Boolean);
+            }
+            if ("models" in json && Array.isArray(json.models)) {
+                return json.models.map((m) => m.id).filter(Boolean);
+            }
+
+            lastError = "Unexpected /models response shape";
+        } catch (e) {
+            lastError =
+                e instanceof Error ? e.message : JSON.stringify(e).slice(0, 200);
+        }
+    }
+
+    throw new Error(
+        `Failed to fetch models from ${normalizeUrlNoTrailingSlash(params.baseUrl)} (${lastError ?? "unknown error"})`,
+    );
+}
+
+export type CustomProviderModelSyncResult = {
+    importedModelCount: number;
+    refreshedProviderIds: string[];
+    errors: Array<{ providerId: string; message: string }>;
+};
+
+/**
+ * Downloads models from user-configured custom OpenAI-compatible providers.
+ *
+ * - Provider configs live in the Settings store.
+ * - Model list is written into existing SQLite `models` + `model_configs`.
+ * - Model IDs are `custom::<providerId>/<remoteModelId>`.
+ */
+export async function downloadCustomProviderModels(
+    db: Database,
+    providerId?: string,
+): Promise<CustomProviderModelSyncResult> {
+    const settings = await SettingsManager.getInstance().get();
+    const configuredProviders = (settings.customProviders ?? []).filter(
+        (p) => p.baseUrl.trim() !== "" && p.apiKey.trim() !== "",
+    );
+
+    // Disable models for any providers that were removed from settings.
+    if (!providerId) {
+        const existingRows = await db.select<{ id: string }[]>(
+            "SELECT id FROM models WHERE id LIKE 'custom::%'",
+        );
+        const existingProviderIds = new Set(
+            existingRows
+                .map((row) => {
+                    try {
+                        return parseCustomProviderModelId(row.id).providerId;
+                    } catch {
+                        return undefined;
+                    }
+                })
+                .filter((x): x is string => Boolean(x)),
+        );
+        const configuredProviderIds = new Set(
+            (settings.customProviders ?? []).map((p) => p.id),
+        );
+        const removedProviderIds = [...existingProviderIds].filter(
+            (id) => !configuredProviderIds.has(id),
+        );
+
+        for (const removedId of removedProviderIds) {
+            await db.execute(
+                "UPDATE models SET is_enabled = 0 WHERE id LIKE ?",
+                [`custom::${removedId}/%`],
+            );
+        }
+    }
+
+    const providersToRefresh = providerId
+        ? configuredProviders.filter((p) => p.id === providerId)
+        : configuredProviders;
+
+    // If a specific provider was requested but doesn't exist anymore, disable it and stop.
+    if (providerId && providersToRefresh.length === 0) {
+        await db.execute("UPDATE models SET is_enabled = 0 WHERE id LIKE ?", [
+            `custom::${providerId}/%`,
+        ]);
+        return {
+            importedModelCount: 0,
+            refreshedProviderIds: [],
+            errors: [],
+        };
+    }
+
+    const result: CustomProviderModelSyncResult = {
+        importedModelCount: 0,
+        refreshedProviderIds: [],
+        errors: [],
+    };
+
+    for (const provider of providersToRefresh) {
+        try {
+            const remoteModelIds = await fetchModelsFromOpenAICompatibleProvider(
+                {
+                    baseUrl: provider.baseUrl,
+                    apiKey: provider.apiKey,
+                },
+            );
+
+            // Only disable/replace after a successful fetch (prevents losing existing models on fetch failure).
+            await db.execute(
+                "UPDATE models SET is_enabled = 0 WHERE id LIKE ?",
+                [`custom::${provider.id}/%`],
+            );
+
+            for (const remoteModelId of remoteModelIds) {
+                await saveModelAndDefaultConfig(
+                    db,
+                    {
+                        id: `custom::${provider.id}/${remoteModelId}`,
+                        displayName: remoteModelId,
+                        supportedAttachmentTypes: ["text", "webpage"],
+                        isEnabled: true,
+                        isInternal: false,
+                    },
+                    remoteModelId,
+                );
+            }
+
+            result.importedModelCount += remoteModelIds.length;
+            result.refreshedProviderIds.push(provider.id);
+        } catch (e) {
+            const message =
+                e instanceof Error ? e.message : JSON.stringify(e).slice(0, 200);
+            result.errors.push({ providerId: provider.id, message });
+        }
+    }
+
+    return result;
+}
+
 /// ------------------------------------------------------------------------------------------------
 /// Helpers
 /// ------------------------------------------------------------------------------------------------
@@ -587,6 +779,7 @@ const CONTEXT_LIMIT_PATTERNS: Record<ProviderName, string> = {
     google: "token count",
     grok: "maximum prompt length",
     openrouter: "context length",
+    custom: "context window", // best guess for OpenAI-compatible servers
     meta: "context window", // best guess
     lmstudio: "context window", // best guess
     perplexity: "context window", // best guess

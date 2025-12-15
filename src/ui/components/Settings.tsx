@@ -8,7 +8,7 @@ import {
 } from "@ui/components/ui/select";
 import {
     SettingsManager,
-    // Settings as SettingsType,
+    type CustomProviderConfig,
 } from "@core/utilities/Settings";
 import { useTheme } from "@ui/hooks/useTheme";
 import {
@@ -85,6 +85,7 @@ import { SiOpenai } from "react-icons/si";
 import ImportChatDialog from "./ImportChatDialog";
 import { dialogActions } from "@core/infra/DialogStore";
 import * as AppMetadataAPI from "@core/chorus/api/AppMetadataAPI";
+import * as ModelsAPI from "@core/chorus/api/ModelsAPI";
 import { PermissionsTab } from "./PermissionsTab";
 import { cn } from "@ui/lib/utils";
 
@@ -1125,21 +1126,26 @@ interface QuickChatSettings {
 }
 
 interface Settings {
+    defaultEditor: string;
     apiKeys: Record<string, string>;
-    sansFont?: string;
-    monoFont?: string;
+    sansFont: string;
+    monoFont: string;
     autoConvertLongText: boolean;
     quickChat: QuickChatSettings;
     lmStudioBaseUrl?: string;
     autoScrapeUrls: boolean;
     cautiousEnter?: boolean;
     customToolsets?: CustomToolsetConfig[];
+    customProviders?: CustomProviderConfig[];
 }
 
 export default function Settings({ tab = "general" }: SettingsProps) {
     const settingsManager = SettingsManager.getInstance();
     const { mode, setMode, setSansFont, setMonoFont, sansFont } = useTheme();
     const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+    const [customProviders, setCustomProviders] = useState<
+        CustomProviderConfig[]
+    >([]);
     const [autoConvertLongText, setAutoConvertLongText] = useState(true);
     const [autoScrapeUrls, setAutoScrapeUrls] = useState(true);
     const [cautiousEnter, setCautiousEnter] = useState(false);
@@ -1153,6 +1159,7 @@ export default function Settings({ tab = "general" }: SettingsProps) {
         "http://localhost:1234/v1",
     );
     const queryClient = useQueryClient();
+    const refreshCustomProviderModels = ModelsAPI.useRefreshCustomProviderModels();
 
     // Use React Query hooks for custom base URL
     const customBaseUrl = AppMetadataAPI.useCustomBaseUrl() || "";
@@ -1220,12 +1227,90 @@ export default function Settings({ tab = "general" }: SettingsProps) {
         void queryClient.invalidateQueries({ queryKey: ["apiKeys"] });
     };
 
+    const handleUpsertCustomProvider = async (
+        provider: CustomProviderConfig,
+    ) => {
+        const currentSettings = (await settingsManager.get()) as Settings;
+        const existing = currentSettings.customProviders ?? [];
+        const next = existing.some((p) => p.id === provider.id)
+            ? existing.map((p) => (p.id === provider.id ? provider : p))
+            : [...existing, provider];
+
+        setCustomProviders(next);
+        await settingsManager.set({
+            ...currentSettings,
+            customProviders: next,
+        });
+
+        await queryClient.invalidateQueries({ queryKey: ["customProviders"] });
+
+        try {
+            const syncResult = await refreshCustomProviderModels.mutateAsync({
+                providerId: provider.id,
+            });
+
+            if (syncResult.errors.length > 0) {
+                toast.error("Failed to import models", {
+                    description: syncResult.errors[0].message,
+                });
+            } else {
+                toast.success("Imported models", {
+                    description: `Imported ${syncResult.importedModelCount} model(s) from ${provider.name}`,
+                });
+            }
+        } catch (e) {
+            toast.error("Failed to refresh models", {
+                description:
+                    e instanceof Error ? e.message : JSON.stringify(e).slice(0, 200),
+            });
+        }
+    };
+
+    const handleDeleteCustomProvider = async (providerId: string) => {
+        const currentSettings = (await settingsManager.get()) as Settings;
+        const existing = currentSettings.customProviders ?? [];
+        const next = existing.filter((p) => p.id !== providerId);
+        const deletedProvider = existing.find((p) => p.id === providerId);
+
+        setCustomProviders(next);
+        await settingsManager.set({
+            ...currentSettings,
+            customProviders: next,
+        });
+
+        await queryClient.invalidateQueries({ queryKey: ["customProviders"] });
+
+        try {
+            const syncResult = await refreshCustomProviderModels.mutateAsync({
+                providerId,
+            });
+
+            if (syncResult.errors.length > 0) {
+                toast.error("Failed to refresh models", {
+                    description: syncResult.errors[0].message,
+                });
+            } else {
+                toast.success("Provider deleted", {
+                    description: deletedProvider
+                        ? `Disabled models for ${deletedProvider.name}`
+                        : "Provider removed",
+                });
+            }
+        } catch (e) {
+            toast.error("Failed to refresh models", {
+                description:
+                    e instanceof Error ? e.message : JSON.stringify(e).slice(0, 200),
+            });
+        }
+    };
+
     useEffect(() => {
         const loadSettings = async () => {
             const settings = (await settingsManager.get()) as Settings;
             setSansFont(settings.sansFont ?? "Geist");
             setMonoFont(settings.monoFont ?? "Fira Code");
             setApiKeys(settings.apiKeys ?? {});
+            setCustomProviders(settings.customProviders ?? []);
             setQuickChatEnabled(settings.quickChat?.enabled ?? true);
             setQuickChatShortcut(settings.quickChat?.shortcut ?? "Alt+Space");
             setAutoConvertLongText(settings.autoConvertLongText ?? true);
@@ -1716,6 +1801,13 @@ export default function Settings({ tab = "general" }: SettingsProps) {
                                     apiKeys={apiKeys}
                                     onApiKeyChange={(provider, value) =>
                                         void handleApiKeyChange(provider, value)
+                                    }
+                                    customProviders={customProviders}
+                                    onUpsertCustomProvider={
+                                        handleUpsertCustomProvider
+                                    }
+                                    onDeleteCustomProvider={
+                                        handleDeleteCustomProvider
                                     }
                                 />
                                 <Separator className="my-4" />
