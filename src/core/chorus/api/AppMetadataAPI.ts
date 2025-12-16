@@ -1,11 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { db } from "../DB";
-import { SettingsManager } from "@core/utilities/Settings";
+import {
+    CustomProviderConfig,
+    SettingsManager,
+} from "@core/utilities/Settings";
 import * as Models from "../Models";
+import { modelConfigQueries } from "./ModelsAPI";
 
 export const appMetadataKeys = {
     appMetadata: () => ["appMetadata"] as const,
 };
+
+export const AMBIENT_CHAT_SYSTEM_PROMPT_KEY = "ambient_chat_system_prompt";
+export const QUICK_CHAT_MODEL_CONFIG_ID_KEY = "quick_chat_model_config_id";
+const CHAT_TITLE_MODEL_CONFIG_ID_KEY = "chat_title_model_config_id";
 
 export async function fetchAppMetadata(): Promise<Record<string, string>> {
     return (
@@ -37,6 +45,11 @@ export function useAppMetadata() {
                 {} as Record<string, string>,
             ),
     });
+}
+
+export function useAmbientChatSystemPrompt() {
+    const { data: appMetadata } = useAppMetadata();
+    return appMetadata?.[AMBIENT_CHAT_SYSTEM_PROMPT_KEY] ?? "";
 }
 
 export function useSkipOnboarding() {
@@ -174,10 +187,35 @@ export function useSetVisionModeEnabled() {
     });
 }
 
+export function useSetQuickChatModelConfigId() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationKey: ["setQuickChatModelConfigId"] as const,
+        mutationFn: async (modelConfigId: string) => {
+            await db.execute(
+                "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
+                [QUICK_CHAT_MODEL_CONFIG_ID_KEY, modelConfigId],
+            );
+        },
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({
+                queryKey: appMetadataKeys.appMetadata(),
+            });
+            await queryClient.invalidateQueries(modelConfigQueries.quickChat());
+        },
+    });
+}
+
 export async function getApiKeys() {
     const settingsManager = SettingsManager.getInstance();
     const settings = await settingsManager.get();
     return (settings.apiKeys || {}) as Models.ApiKeys;
+}
+
+export async function getCustomProviders(): Promise<CustomProviderConfig[]> {
+    const settingsManager = SettingsManager.getInstance();
+    const settings = await settingsManager.get();
+    return settings.customProviders ?? [];
 }
 
 export async function getCustomBaseUrl() {
@@ -236,6 +274,13 @@ export function useApiKeys() {
     });
 }
 
+export function useCustomProviders() {
+    return useQuery({
+        queryKey: ["customProviders"],
+        queryFn: getCustomProviders,
+    });
+}
+
 export function useZoomLevel() {
     const { data: appMetadata } = useAppMetadata();
     return parseFloat(appMetadata?.["zoom_level"] || "100");
@@ -249,6 +294,34 @@ export function useSetZoomLevel() {
             await db.execute(
                 "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
                 ["zoom_level", zoomLevel.toString()],
+            );
+        },
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({
+                queryKey: appMetadataKeys.appMetadata(),
+            });
+        },
+    });
+}
+
+export async function getChatTitleModelConfigId(): Promise<string> {
+    const appMetadata = await fetchAppMetadata();
+    return appMetadata[CHAT_TITLE_MODEL_CONFIG_ID_KEY] ?? "";
+}
+
+export function useChatTitleModelConfigId(): string {
+    const { data: appMetadata } = useAppMetadata();
+    return appMetadata?.[CHAT_TITLE_MODEL_CONFIG_ID_KEY] ?? "";
+}
+
+export function useSetChatTitleModelConfigId() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationKey: ["setChatTitleModelConfigId"] as const,
+        mutationFn: async (modelConfigId: string) => {
+            await db.execute(
+                "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
+                [CHAT_TITLE_MODEL_CONFIG_ID_KEY, modelConfigId ?? ""],
             );
         },
         onSuccess: async () => {

@@ -113,6 +113,10 @@ async function convertMessage(
                     break;
                 }
                 case "pdf": {
+                    if (!imageSupport) {
+                        attachmentTexts += attachmentMissingFlag(attachment);
+                        break;
+                    }
                     try {
                         console.log("Converting PDF to PNG:", attachment.path);
                         const pngUrls = await convertPdfToPng(attachment.path);
@@ -131,6 +135,7 @@ async function convertMessage(
                     } catch (error) {
                         console.error("Failed to convert PDF to PNG:", error);
                         console.error("PDF path was:", attachment.path);
+                        attachmentTexts += attachmentMissingFlag(attachment);
                     }
                     break;
                 }

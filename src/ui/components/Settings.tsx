@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
     Select,
     SelectContent,
@@ -8,7 +8,7 @@ import {
 } from "@ui/components/ui/select";
 import {
     SettingsManager,
-    // Settings as SettingsType,
+    type CustomProviderConfig,
 } from "@core/utilities/Settings";
 import { useTheme } from "@ui/hooks/useTheme";
 import {
@@ -40,6 +40,7 @@ import {
     Import,
     BookOpen,
     Globe,
+    MessageSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { config } from "@core/config";
@@ -85,8 +86,14 @@ import { SiOpenai } from "react-icons/si";
 import ImportChatDialog from "./ImportChatDialog";
 import { dialogActions } from "@core/infra/DialogStore";
 import * as AppMetadataAPI from "@core/chorus/api/AppMetadataAPI";
+import * as ModelsAPI from "@core/chorus/api/ModelsAPI";
 import { PermissionsTab } from "./PermissionsTab";
 import { cn } from "@ui/lib/utils";
+import {
+    MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID,
+    ManageModelsBox,
+} from "./ManageModelsBox";
+import { ProviderLogo } from "./ui/provider-logo";
 
 type ToolsetFormProps = {
     toolset: CustomToolsetConfig;
@@ -1066,6 +1073,7 @@ function ToolsTab() {
 }
 
 export const SETTINGS_DIALOG_ID = "settings";
+const MANAGE_MODELS_CHAT_TITLE_DIALOG_ID = "manage-models-chat-title";
 
 interface SettingsProps {
     tab?: SettingsTabId;
@@ -1094,6 +1102,7 @@ export type SettingsTabId =
     | "general"
     | "import"
     | "system-prompt"
+    | "chat"
     | "api-keys"
     | "quick-chat"
     | "connections"
@@ -1110,6 +1119,7 @@ const TABS: Record<SettingsTabId, TabConfig> = {
     general: { label: "General", icon: User2 },
     import: { label: "Import", icon: Import },
     "system-prompt": { label: "System Prompt", icon: FileText },
+    chat: { label: "Chat", icon: MessageSquare },
     "api-keys": { label: "API Keys", icon: Key },
     "quick-chat": { label: "Ambient Chat", icon: Fullscreen },
     connections: { label: "Connections", icon: PlugIcon },
@@ -1125,21 +1135,26 @@ interface QuickChatSettings {
 }
 
 interface Settings {
+    defaultEditor: string;
     apiKeys: Record<string, string>;
-    sansFont?: string;
-    monoFont?: string;
+    sansFont: string;
+    monoFont: string;
     autoConvertLongText: boolean;
     quickChat: QuickChatSettings;
     lmStudioBaseUrl?: string;
     autoScrapeUrls: boolean;
     cautiousEnter?: boolean;
     customToolsets?: CustomToolsetConfig[];
+    customProviders?: CustomProviderConfig[];
 }
 
 export default function Settings({ tab = "general" }: SettingsProps) {
     const settingsManager = SettingsManager.getInstance();
     const { mode, setMode, setSansFont, setMonoFont, sansFont } = useTheme();
     const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
+    const [customProviders, setCustomProviders] = useState<
+        CustomProviderConfig[]
+    >([]);
     const [autoConvertLongText, setAutoConvertLongText] = useState(true);
     const [autoScrapeUrls, setAutoScrapeUrls] = useState(true);
     const [cautiousEnter, setCautiousEnter] = useState(false);
@@ -1153,6 +1168,15 @@ export default function Settings({ tab = "general" }: SettingsProps) {
         "http://localhost:1234/v1",
     );
     const queryClient = useQueryClient();
+    const refreshCustomProviderModels = ModelsAPI.useRefreshCustomProviderModels();
+    const modelConfigsQuery = ModelsAPI.useModelConfigs();
+    const { data: quickChatModelConfig } =
+        ModelsAPI.useSelectedModelConfigQuickChat();
+    const setQuickChatModelConfigIdMutation =
+        AppMetadataAPI.useSetQuickChatModelConfigId();
+    const chatTitleModelConfigId = AppMetadataAPI.useChatTitleModelConfigId();
+    const setChatTitleModelConfigIdMutation =
+        AppMetadataAPI.useSetChatTitleModelConfigId();
 
     // Use React Query hooks for custom base URL
     const customBaseUrl = AppMetadataAPI.useCustomBaseUrl() || "";
@@ -1220,12 +1244,90 @@ export default function Settings({ tab = "general" }: SettingsProps) {
         void queryClient.invalidateQueries({ queryKey: ["apiKeys"] });
     };
 
+    const handleUpsertCustomProvider = async (
+        provider: CustomProviderConfig,
+    ) => {
+        const currentSettings = (await settingsManager.get()) as Settings;
+        const existing = currentSettings.customProviders ?? [];
+        const next = existing.some((p) => p.id === provider.id)
+            ? existing.map((p) => (p.id === provider.id ? provider : p))
+            : [...existing, provider];
+
+        setCustomProviders(next);
+        await settingsManager.set({
+            ...currentSettings,
+            customProviders: next,
+        });
+
+        await queryClient.invalidateQueries({ queryKey: ["customProviders"] });
+
+        try {
+            const syncResult = await refreshCustomProviderModels.mutateAsync({
+                providerId: provider.id,
+            });
+
+            if (syncResult.errors.length > 0) {
+                toast.error("Failed to import models", {
+                    description: syncResult.errors[0].message,
+                });
+            } else {
+                toast.success("Imported models", {
+                    description: `Imported ${syncResult.importedModelCount} model(s) from ${provider.name}`,
+                });
+            }
+        } catch (e) {
+            toast.error("Failed to refresh models", {
+                description:
+                    e instanceof Error ? e.message : JSON.stringify(e).slice(0, 200),
+            });
+        }
+    };
+
+    const handleDeleteCustomProvider = async (providerId: string) => {
+        const currentSettings = (await settingsManager.get()) as Settings;
+        const existing = currentSettings.customProviders ?? [];
+        const next = existing.filter((p) => p.id !== providerId);
+        const deletedProvider = existing.find((p) => p.id === providerId);
+
+        setCustomProviders(next);
+        await settingsManager.set({
+            ...currentSettings,
+            customProviders: next,
+        });
+
+        await queryClient.invalidateQueries({ queryKey: ["customProviders"] });
+
+        try {
+            const syncResult = await refreshCustomProviderModels.mutateAsync({
+                providerId,
+            });
+
+            if (syncResult.errors.length > 0) {
+                toast.error("Failed to refresh models", {
+                    description: syncResult.errors[0].message,
+                });
+            } else {
+                toast.success("Provider deleted", {
+                    description: deletedProvider
+                        ? `Disabled models for ${deletedProvider.name}`
+                        : "Provider removed",
+                });
+            }
+        } catch (e) {
+            toast.error("Failed to refresh models", {
+                description:
+                    e instanceof Error ? e.message : JSON.stringify(e).slice(0, 200),
+            });
+        }
+    };
+
     useEffect(() => {
         const loadSettings = async () => {
             const settings = (await settingsManager.get()) as Settings;
             setSansFont(settings.sansFont ?? "Geist");
             setMonoFont(settings.monoFont ?? "Fira Code");
             setApiKeys(settings.apiKeys ?? {});
+            setCustomProviders(settings.customProviders ?? []);
             setQuickChatEnabled(settings.quickChat?.enabled ?? true);
             setQuickChatShortcut(settings.quickChat?.shortcut ?? "Alt+Space");
             setAutoConvertLongText(settings.autoConvertLongText ?? true);
@@ -1359,6 +1461,28 @@ export default function Settings({ tab = "general" }: SettingsProps) {
     useEffect(() => {
         setActiveTab(defaultTab);
     }, [defaultTab]);
+
+    const selectedChatTitleModelConfig = useMemo(() => {
+        if (!chatTitleModelConfigId) return undefined;
+        return modelConfigsQuery.data?.find(
+            (c) => c.id === chatTitleModelConfigId,
+        );
+    }, [chatTitleModelConfigId, modelConfigsQuery.data]);
+
+    const chatTitleAmbientLabel = useMemo(() => {
+        return quickChatModelConfig
+            ? `Use Ambient Chat model (default) — ${quickChatModelConfig.displayName}`
+            : "Use Ambient Chat model (default)";
+    }, [quickChatModelConfig]);
+    const ambientChatModelLabel =
+        quickChatModelConfig?.displayName ?? "Unavailable";
+    const chatTitlePickerLabel = chatTitleModelConfigId
+        ? (selectedChatTitleModelConfig?.displayName ??
+          `Unavailable: ${chatTitleModelConfigId}`)
+        : chatTitleAmbientLabel;
+    const chatTitlePickerModelId = chatTitleModelConfigId
+        ? selectedChatTitleModelConfig?.modelId
+        : quickChatModelConfig?.modelId;
 
     const content = (
         <div className="flex flex-col h-full">
@@ -1699,6 +1823,108 @@ export default function Settings({ tab = "general" }: SettingsProps) {
                         </div>
                     )}
 
+                    {activeTab === "chat" && (
+                        <div className="space-y-6 max-w-2xl">
+                            <div>
+                                <h2 className="text-2xl font-semibold mb-2">
+                                    Chat
+                                </h2>
+                                <p className="text-muted-foreground text-sm">
+                                    Configure chat-specific behavior, like
+                                    which model Chorus uses to generate chat
+                                    titles.
+                                </p>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label
+                                        htmlFor="ambient-chat-model-config-id"
+                                        className="block font-semibold mb-2"
+                                    >
+                                        Ambient Chat model
+                                    </label>
+                                    <button
+                                        id="ambient-chat-model-config-id"
+                                        type="button"
+                                        onClick={() => {
+                                            dialogActions.openDialog(
+                                                MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID,
+                                            );
+                                        }}
+                                        className={cn(
+                                            "flex w-full hover:bg-background/50 items-center justify-between rounded-md border border-input bg-background text-foreground px-3 py-2 ring-offset-background placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+                                            "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2 overflow-hidden">
+                                            {quickChatModelConfig ? (
+                                                <ProviderLogo
+                                                    modelId={
+                                                        quickChatModelConfig.modelId
+                                                    }
+                                                    size="sm"
+                                                />
+                                            ) : null}
+                                            <span className="truncate">
+                                                {ambientChatModelLabel}
+                                            </span>
+                                        </div>
+                                        <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
+                                    </button>
+
+                                    <p className="text-sm text-muted-foreground mt-2">
+                                        The model used for Ambient Chat.
+                                        Changes apply immediately.
+                                    </p>
+                                </div>
+                                <div>
+                                    <label
+                                        htmlFor="chat-title-model-config-id"
+                                        className="block font-semibold mb-2"
+                                    >
+                                        Chat Title model
+                                    </label>
+                                    <button
+                                        id="chat-title-model-config-id"
+                                        type="button"
+                                        onClick={() => {
+                                            dialogActions.openDialog(
+                                                MANAGE_MODELS_CHAT_TITLE_DIALOG_ID,
+                                            );
+                                        }}
+                                        className={cn(
+                                            "flex w-full hover:bg-background/50 items-center justify-between rounded-md border border-input bg-background text-foreground px-3 py-2 ring-offset-background placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+                                            "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2 overflow-hidden">
+                                            {chatTitlePickerModelId ? (
+                                                <ProviderLogo
+                                                    modelId={
+                                                        chatTitlePickerModelId
+                                                    }
+                                                    size="sm"
+                                                />
+                                            ) : null}
+                                            <span className="truncate">
+                                                {chatTitlePickerLabel}
+                                            </span>
+                                        </div>
+                                        <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
+                                    </button>
+
+                                    <p className="text-sm text-muted-foreground mt-2">
+                                        If the selected model is unavailable,
+                                        Chorus falls back to the Ambient Chat
+                                        model. If no model is available, titles
+                                        remain “Untitled Chat”.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {activeTab === "api-keys" && (
                         <div className="space-y-6 max-w-2xl">
                             <div>
@@ -1716,6 +1942,13 @@ export default function Settings({ tab = "general" }: SettingsProps) {
                                     apiKeys={apiKeys}
                                     onApiKeyChange={(provider, value) =>
                                         void handleApiKeyChange(provider, value)
+                                    }
+                                    customProviders={customProviders}
+                                    onUpsertCustomProvider={
+                                        handleUpsertCustomProvider
+                                    }
+                                    onDeleteCustomProvider={
+                                        handleDeleteCustomProvider
                                     }
                                 />
                                 <Separator className="my-4" />
@@ -1975,6 +2208,41 @@ export default function Settings({ tab = "general" }: SettingsProps) {
                     {content}
                 </DialogContent>
             </Dialog>
+            <ManageModelsBox
+                id={MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID}
+                mode={{
+                    type: "single",
+                    selectedModelConfigId: quickChatModelConfig?.id ?? "",
+                    onSetModel: (modelConfigId: string) => {
+                        void setQuickChatModelConfigIdMutation
+                            .mutateAsync(modelConfigId)
+                            .catch((error: unknown) => {
+                                console.error(error);
+                                toast.error(
+                                    "Failed to update Ambient Chat model",
+                                );
+                            });
+                    },
+                }}
+            />
+            <ManageModelsBox
+                id={MANAGE_MODELS_CHAT_TITLE_DIALOG_ID}
+                mode={{
+                    type: "single",
+                    selectedModelConfigId: chatTitleModelConfigId,
+                    onSetModel: (modelConfigId: string) => {
+                        void setChatTitleModelConfigIdMutation
+                            .mutateAsync(modelConfigId)
+                            .catch((error: unknown) => {
+                                console.error(error);
+                                toast.error(
+                                    "Failed to update chat title model",
+                                );
+                            });
+                    },
+                }}
+                singleModeDefaultOptionLabel={chatTitleAmbientLabel}
+            />
             <ImportChatDialog provider="openai" />
             <ImportChatDialog provider="anthropic" />
         </>

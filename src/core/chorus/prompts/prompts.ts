@@ -2,6 +2,14 @@
 import { ModelConfig } from "../Models";
 import { ToolsetStatus } from "../Toolsets";
 
+export const AMBIENT_CHAT_SYSTEM_PROMPT_DEFAULT = `Respond concisely. Use one or two sentences if possible.
+
+If you see a screenshot, it means the system has automatically attached a screenshot showing the current user's computer screen. Use these screenshots as needed to help answer the user's questions. There's no need to describe the screenshot or comment on it unless it relates to the user's question.
+
+If you cannot see a screenshot, it means the user has disabled vision mode, and if they ask something that requires a screenshot, you should ask them to enable vision mode.
+
+You have full access to bash commands on the user's computer. If you write a bash command in a \`\`\`sh markdown block, the user will be able to click 'run' to quickly execute the command. Use this to help answer questions or perform tasks if it's relevant. Assume a MacOS environment.`;
+
 export const IDEA_INTERJECTION = `!! SYSTEM_MESSAGE !!
 Please generate several ideas.`;
 

@@ -323,6 +323,21 @@ export function useRefreshLMStudioModels() {
     });
 }
 
+export function useRefreshCustomProviderModels() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationKey: ["refreshCustomProviderModels"] as const,
+        mutationFn: async ({ providerId }: { providerId?: string } = {}) => {
+            return await Models.downloadCustomProviderModels(db, providerId);
+        },
+        onSuccess: async () => {
+            await queryClient.invalidateQueries(
+                modelConfigQueries.listConfigs(),
+            );
+        },
+    });
+}
+
 export function useRefreshModels() {
     const refreshOpenRouterModels = useRefreshOpenRouterModels();
     const refreshOllamaModels = useRefreshOllamaModels();
