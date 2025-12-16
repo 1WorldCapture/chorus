@@ -324,6 +324,50 @@ export async function streamResponse(
     });
 }
 
+/**
+ * Simplified wrapper around streamResponse that returns the complete text response.
+ *
+ * Use this when you need the full LLM response but don't need to display it progressively.
+ * Currently used for generating chat titles in the background.
+ */
+export async function completeText(params: {
+    modelConfig: ModelConfig;
+    llmConversation: LLMMessage[];
+    apiKeys: ApiKeys;
+    tools?: UserTool[];
+    additionalHeaders?: Record<string, string>;
+    customBaseUrl?: string;
+}): Promise<string> {
+    let text = "";
+    let errorMessage: string | undefined;
+
+    await streamResponse({
+        modelConfig: params.modelConfig,
+        llmConversation: params.llmConversation,
+        tools: params.tools,
+        apiKeys: params.apiKeys,
+        additionalHeaders: params.additionalHeaders,
+        customBaseUrl: params.customBaseUrl,
+        onChunk: (chunk) => {
+            text += chunk;
+        },
+        onComplete: async (finalMessage) => {
+            if (finalMessage) {
+                text += finalMessage;
+            }
+        },
+        onError: (error) => {
+            errorMessage = error;
+        },
+    });
+
+    if (errorMessage) {
+        throw new Error(errorMessage);
+    }
+
+    return text;
+}
+
 /// ------------------------------------------------------------------------------------------------
 /// Model initialization
 /// ------------------------------------------------------------------------------------------------

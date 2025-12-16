@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
     Select,
     SelectContent,
@@ -40,6 +40,7 @@ import {
     Import,
     BookOpen,
     Globe,
+    MessageSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { config } from "@core/config";
@@ -88,6 +89,8 @@ import * as AppMetadataAPI from "@core/chorus/api/AppMetadataAPI";
 import * as ModelsAPI from "@core/chorus/api/ModelsAPI";
 import { PermissionsTab } from "./PermissionsTab";
 import { cn } from "@ui/lib/utils";
+import { ManageModelsBox } from "./ManageModelsBox";
+import { ProviderLogo } from "./ui/provider-logo";
 
 type ToolsetFormProps = {
     toolset: CustomToolsetConfig;
@@ -1067,6 +1070,7 @@ function ToolsTab() {
 }
 
 export const SETTINGS_DIALOG_ID = "settings";
+const MANAGE_MODELS_CHAT_TITLE_DIALOG_ID = "manage-models-chat-title";
 
 interface SettingsProps {
     tab?: SettingsTabId;
@@ -1095,6 +1099,7 @@ export type SettingsTabId =
     | "general"
     | "import"
     | "system-prompt"
+    | "chat"
     | "api-keys"
     | "quick-chat"
     | "connections"
@@ -1111,6 +1116,7 @@ const TABS: Record<SettingsTabId, TabConfig> = {
     general: { label: "General", icon: User2 },
     import: { label: "Import", icon: Import },
     "system-prompt": { label: "System Prompt", icon: FileText },
+    chat: { label: "Chat", icon: MessageSquare },
     "api-keys": { label: "API Keys", icon: Key },
     "quick-chat": { label: "Ambient Chat", icon: Fullscreen },
     connections: { label: "Connections", icon: PlugIcon },
@@ -1160,6 +1166,12 @@ export default function Settings({ tab = "general" }: SettingsProps) {
     );
     const queryClient = useQueryClient();
     const refreshCustomProviderModels = ModelsAPI.useRefreshCustomProviderModels();
+    const modelConfigsQuery = ModelsAPI.useModelConfigs();
+    const { data: quickChatModelConfig } =
+        ModelsAPI.useSelectedModelConfigQuickChat();
+    const chatTitleModelConfigId = AppMetadataAPI.useChatTitleModelConfigId();
+    const setChatTitleModelConfigIdMutation =
+        AppMetadataAPI.useSetChatTitleModelConfigId();
 
     // Use React Query hooks for custom base URL
     const customBaseUrl = AppMetadataAPI.useCustomBaseUrl() || "";
@@ -1444,6 +1456,26 @@ export default function Settings({ tab = "general" }: SettingsProps) {
     useEffect(() => {
         setActiveTab(defaultTab);
     }, [defaultTab]);
+
+    const selectedChatTitleModelConfig = useMemo(() => {
+        if (!chatTitleModelConfigId) return undefined;
+        return modelConfigsQuery.data?.find(
+            (c) => c.id === chatTitleModelConfigId,
+        );
+    }, [chatTitleModelConfigId, modelConfigsQuery.data]);
+
+    const chatTitleAmbientLabel = useMemo(() => {
+        return quickChatModelConfig
+            ? `Use Ambient Chat model (default) — ${quickChatModelConfig.displayName}`
+            : "Use Ambient Chat model (default)";
+    }, [quickChatModelConfig]);
+    const chatTitlePickerLabel = chatTitleModelConfigId
+        ? (selectedChatTitleModelConfig?.displayName ??
+          `Unavailable: ${chatTitleModelConfigId}`)
+        : chatTitleAmbientLabel;
+    const chatTitlePickerModelId = chatTitleModelConfigId
+        ? selectedChatTitleModelConfig?.modelId
+        : quickChatModelConfig?.modelId;
 
     const content = (
         <div className="flex flex-col h-full">
@@ -1784,6 +1816,67 @@ export default function Settings({ tab = "general" }: SettingsProps) {
                         </div>
                     )}
 
+                    {activeTab === "chat" && (
+                        <div className="space-y-6 max-w-2xl">
+                            <div>
+                                <h2 className="text-2xl font-semibold mb-2">
+                                    Chat
+                                </h2>
+                                <p className="text-muted-foreground text-sm">
+                                    Configure chat-specific behavior, like
+                                    which model Chorus uses to generate chat
+                                    titles.
+                                </p>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label
+                                        htmlFor="chat-title-model-config-id"
+                                        className="block font-semibold mb-2"
+                                    >
+                                        Chat Title model
+                                    </label>
+                                    <button
+                                        id="chat-title-model-config-id"
+                                        type="button"
+                                        onClick={() => {
+                                            dialogActions.openDialog(
+                                                MANAGE_MODELS_CHAT_TITLE_DIALOG_ID,
+                                            );
+                                        }}
+                                        className={cn(
+                                            "flex w-full hover:bg-background/50 items-center justify-between rounded-md border border-input bg-background text-foreground px-3 py-2 ring-offset-background placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+                                            "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2 overflow-hidden">
+                                            {chatTitlePickerModelId ? (
+                                                <ProviderLogo
+                                                    modelId={
+                                                        chatTitlePickerModelId
+                                                    }
+                                                    size="sm"
+                                                />
+                                            ) : null}
+                                            <span className="truncate">
+                                                {chatTitlePickerLabel}
+                                            </span>
+                                        </div>
+                                        <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
+                                    </button>
+
+                                    <p className="text-sm text-muted-foreground mt-2">
+                                        If the selected model is unavailable,
+                                        Chorus falls back to the Ambient Chat
+                                        model. If no model is available, titles
+                                        remain “Untitled Chat”.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {activeTab === "api-keys" && (
                         <div className="space-y-6 max-w-2xl">
                             <div>
@@ -2067,6 +2160,24 @@ export default function Settings({ tab = "general" }: SettingsProps) {
                     {content}
                 </DialogContent>
             </Dialog>
+            <ManageModelsBox
+                id={MANAGE_MODELS_CHAT_TITLE_DIALOG_ID}
+                mode={{
+                    type: "single",
+                    selectedModelConfigId: chatTitleModelConfigId,
+                    onSetModel: (modelConfigId: string) => {
+                        void setChatTitleModelConfigIdMutation
+                            .mutateAsync(modelConfigId)
+                            .catch((error: unknown) => {
+                                console.error(error);
+                                toast.error(
+                                    "Failed to update chat title model",
+                                );
+                            });
+                    },
+                }}
+                singleModeDefaultOptionLabel={chatTitleAmbientLabel}
+            />
             <ImportChatDialog provider="openai" />
             <ImportChatDialog provider="anthropic" />
         </>

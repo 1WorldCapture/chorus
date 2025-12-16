@@ -2458,5 +2458,14 @@ You have full access to bash commands on the user''''s computer. If you write a 
                     ('selected_model_configs_compare', '["openrouter::anthropic/claude-opus-4.5"]');
             "#,
         },
+        Migration {
+            version: 132,
+            description: "add chat_title_model_config_id row to app_metadata",
+            kind: MigrationKind::Up,
+            sql: r#"
+                INSERT OR IGNORE INTO app_metadata (key, value) VALUES
+                    ('chat_title_model_config_id', '');
+            "#,
+        },
     ];
 }

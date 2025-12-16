@@ -1,4 +1,5 @@
-import { ApiKeys } from "@core/chorus/Models";
+import { ApiKeys, getProviderName, parseCustomProviderModelId } from "@core/chorus/Models";
+import type { CustomProviderConfig } from "@core/utilities/Settings";
 
 export interface CanProceedResult {
     canProceed: boolean;
@@ -77,4 +78,54 @@ export function canProceedWithProvider(
     }
 
     return { canProceed: true };
+}
+
+export function canProceedWithModelId(params: {
+    modelId: string;
+    apiKeys: ApiKeys;
+    customProviders?: CustomProviderConfig[];
+}): CanProceedResult {
+    let providerName: string;
+    try {
+        providerName = getProviderName(params.modelId);
+    } catch (error) {
+        console.error(error);
+        return { canProceed: false, reason: "Invalid model ID." };
+    }
+
+    if (providerName === "custom") {
+        try {
+            const { providerId } = parseCustomProviderModelId(params.modelId);
+            const provider = params.customProviders?.find(
+                (p) => p.id === providerId,
+            );
+            if (!provider) {
+                return {
+                    canProceed: false,
+                    reason: "Custom provider not found. Configure it in Settings → API Keys.",
+                };
+            }
+            if (!provider.baseUrl?.trim()) {
+                return {
+                    canProceed: false,
+                    reason: `Custom provider "${provider.name}" is missing a Base URL. Configure it in Settings → API Keys.`,
+                };
+            }
+            if (!provider.apiKey?.trim()) {
+                return {
+                    canProceed: false,
+                    reason: `Custom provider "${provider.name}" is missing an API key. Configure it in Settings → API Keys.`,
+                };
+            }
+            return { canProceed: true };
+        } catch (error) {
+            console.error(error);
+            return {
+                canProceed: false,
+                reason: "Invalid custom provider model ID.",
+            };
+        }
+    }
+
+    return canProceedWithProvider(providerName, params.apiKeys);
 }

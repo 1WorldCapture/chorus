@@ -21,7 +21,7 @@ import * as Models from "../Models";
 import { UpdateQueue } from "../UpdateQueue";
 import posthog from "posthog-js";
 import { v4 as uuidv4 } from "uuid";
-import { simpleLLM, simpleSummarizeLLM } from "../simpleLLM";
+import { simpleSummarizeLLM } from "../simpleLLM";
 import * as Prompts from "../prompts/prompts";
 import { useNavigate } from "react-router-dom";
 import { ToolsetsManager } from "../ToolsetsManager";
@@ -36,8 +36,10 @@ import { chatIsLoadingQueries, chatQueries } from "./ChatAPI";
 import {
     appMetadataKeys,
     getApiKeys,
+    getCustomProviders,
     getCustomBaseUrl,
 } from "./AppMetadataAPI";
+import { canProceedWithModelId } from "@core/utilities/ProxyUtils";
 import {
     projectQueries,
     useGetProjectContextLLMMessage,
@@ -2894,57 +2896,182 @@ export function useGenerateChatTitle() {
     return useMutation({
         mutationKey: ["generateChatTitle"] as const,
         mutationFn: async ({ chatId }: { chatId: string }) => {
-            // check if there's already a title
-            const chat = await queryClient.ensureQueryData(
-                chatQueries.detail(chatId),
-            );
-            if (
-                chat?.title &&
-                // if the previous title was "Untitled Chat", might as well try to regenerate it
-                chat.title !== "Untitled Chat"
-            ) {
-                console.log("Skipping title generation for chat", chatId);
-                return { skipped: true };
-            }
+            try {
+                const extractTitleFromModelOutput = (
+                    fullResponse: string,
+                ): string | undefined => {
+                    const normalized = fullResponse.trim();
+                    if (!normalized) return undefined;
 
-            const messageSets = await getMessageSets(chatId);
-            const userMessageText = Array.from(messageSets) // copy so we can reverse
-                .reverse()
-                .map((ms) => ms.userBlock?.message?.text)
-                .find((m) => m !== undefined);
+                    const tagMatch = normalized.match(
+                        /<title>\s*([\s\S]*?)\s*<\/title>/i,
+                    );
+                    const rawTitle =
+                        tagMatch?.[1] ??
+                        normalized
+                            .split(/\r?\n/)
+                            .map((l) => l.trim())
+                            .find(Boolean);
+                    if (!rawTitle) return undefined;
 
-            if (!userMessageText) {
-                console.log("Skipping title generation for chat", chatId);
-                return { skipped: true };
-            }
+                    const cleaned = rawTitle
+                        .replace(/<\/?title>/gi, "")
+                        .trim()
+                        .replace(/^["'`]+|["'`]+$/g, "")
+                        .trim()
+                        .slice(0, 40);
 
-            const fullResponse = await simpleLLM(
-                `Based on this first message, write a 1-5 word title for the conversation. Try to put the most important words first. Format your response as <title>YOUR TITLE HERE</title>.
+                    if (!cleaned) return undefined;
+                    if (cleaned.toLowerCase() === "untitled chat") {
+                        return undefined;
+                    }
+                    return cleaned;
+                };
+
+                // check if there's already a title
+                const chat = await queryClient.ensureQueryData(
+                    chatQueries.detail(chatId),
+                );
+                if (
+                    chat?.title &&
+                    // if the previous title was "Untitled Chat", might as well try to regenerate it
+                    chat.title !== "Untitled Chat"
+                ) {
+                    console.log("Skipping title generation for chat", chatId);
+                    return { skipped: true, reason: "already_titled" };
+                }
+
+                const messageSets = await getMessageSets(chatId);
+                const userMessageText = Array.from(messageSets) // copy so we can reverse
+                    .reverse()
+                    .map((ms) => ms.userBlock?.message?.text)
+                    .find((m) => m !== undefined);
+
+                if (!userMessageText) {
+                    console.log("Skipping title generation for chat", chatId);
+                    return { skipped: true, reason: "no_user_message" };
+                }
+
+                const [appMetadata, apiKeys, customProviders, customBaseUrl] =
+                    await Promise.all([
+                        queryClient.ensureQueryData({
+                            queryKey: appMetadataKeys.appMetadata(),
+                            queryFn: fetchAppMetadata,
+                        }),
+                        getApiKeys(),
+                        getCustomProviders(),
+                        getCustomBaseUrl(),
+                    ]);
+
+                const isModelConfigUsable = (
+                    modelConfig: ModelConfig | null,
+                ): modelConfig is ModelConfig =>
+                    Boolean(
+                        modelConfig &&
+                            modelConfig.isEnabled &&
+                            !modelConfig.isInternal &&
+                            !modelConfig.isDeprecated,
+                    );
+
+                const canProceedWithConfig = (modelConfig: ModelConfig) =>
+                    canProceedWithModelId({
+                        modelId: modelConfig.modelId,
+                        apiKeys,
+                        customProviders,
+                    });
+
+                let titleModelConfig: ModelConfig | null = null;
+                const selectedChatTitleModelConfigId =
+                    appMetadata["chat_title_model_config_id"]?.trim() ?? "";
+
+                if (selectedChatTitleModelConfigId) {
+                    const selectedModelConfig =
+                        await queryClient.ensureQueryData(
+                            modelConfigQueries.detail(
+                                selectedChatTitleModelConfigId,
+                            ),
+                        );
+                    if (isModelConfigUsable(selectedModelConfig)) {
+                        const result = canProceedWithConfig(selectedModelConfig);
+                        if (result.canProceed) {
+                            titleModelConfig = selectedModelConfig;
+                        } else {
+                            console.debug(
+                                "Chat title model not available; falling back to Ambient Chat model",
+                                {
+                                    modelConfigId: selectedModelConfig.id,
+                                    modelId: selectedModelConfig.modelId,
+                                    reason: result.reason,
+                                },
+                            );
+                        }
+                    }
+                }
+
+                if (!titleModelConfig) {
+                    const quickChatModelConfig =
+                        await queryClient.ensureQueryData(
+                            modelConfigQueries.quickChat(),
+                        );
+                    if (
+                        isModelConfigUsable(quickChatModelConfig) &&
+                        canProceedWithConfig(quickChatModelConfig).canProceed
+                    ) {
+                        titleModelConfig = quickChatModelConfig;
+                    }
+                }
+
+                if (!titleModelConfig) {
+                    console.debug("Skipping chat title generation (no model)", {
+                        chatId,
+                        selectedChatTitleModelConfigId,
+                    });
+                    return { skipped: true, reason: "no_available_model" };
+                }
+
+                const prompt = `Based on this first message, write a 1-5 word title for the conversation. Try to put the most important words first. Format your response as <title>YOUR TITLE HERE</title>.
 If there's no information in the message, just return "Untitled Chat".
 <message>
 ${userMessageText}
-</message>`,
-                {
-                    model: "claude-3-5-sonnet-latest",
-                    maxTokens: 100,
-                },
-            );
-            // Extract title from XML tags and clean it up
-            const match = fullResponse.match(/<title>(.*?)<\/title>/s);
-            if (!match || !match[1]) {
-                console.warn("No title found in response:", fullResponse);
-                return;
-            }
-            const cleanTitle = match[1]
-                .trim()
-                .slice(0, 40)
-                .replace(/["']/g, "");
-            if (cleanTitle) {
+</message>`;
+
+                let fullResponse = "";
+                try {
+                    fullResponse = await Models.completeText({
+                        modelConfig: titleModelConfig,
+                        llmConversation: [
+                            {
+                                role: "user",
+                                content: prompt,
+                                attachments: [],
+                            },
+                        ],
+                        apiKeys,
+                        customBaseUrl,
+                    });
+                } catch (error) {
+                    console.warn("Failed to generate title:", error);
+                    return { skipped: true, reason: "generation_failed" };
+                }
+
+                const cleanTitle = extractTitleFromModelOutput(fullResponse);
+                if (!cleanTitle) {
+                    console.warn("Could not extract title from response:", {
+                        modelConfigId: titleModelConfig.id,
+                        response: fullResponse,
+                    });
+                    return { skipped: true, reason: "no_title_extracted" };
+                }
+
                 console.log("Setting chat title to:", cleanTitle);
                 await db.execute("UPDATE chats SET title = $1 WHERE id = $2", [
                     cleanTitle,
                     chatId,
                 ]);
+                return { skipped: false, title: cleanTitle };
+            } catch (error) {
+                console.warn("Skipping title generation due to error:", error);
+                return { skipped: true, reason: "unexpected_error" };
             }
         },
         onSuccess: async (data, variables) => {

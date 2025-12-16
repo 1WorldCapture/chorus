@@ -10,6 +10,8 @@ export const appMetadataKeys = {
     appMetadata: () => ["appMetadata"] as const,
 };
 
+const CHAT_TITLE_MODEL_CONFIG_ID_KEY = "chat_title_model_config_id";
+
 export async function fetchAppMetadata(): Promise<Record<string, string>> {
     return (
         await db.select<{ key: string; value: string }[]>(
@@ -265,6 +267,34 @@ export function useSetZoomLevel() {
             await db.execute(
                 "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
                 ["zoom_level", zoomLevel.toString()],
+            );
+        },
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({
+                queryKey: appMetadataKeys.appMetadata(),
+            });
+        },
+    });
+}
+
+export async function getChatTitleModelConfigId(): Promise<string> {
+    const appMetadata = await fetchAppMetadata();
+    return appMetadata[CHAT_TITLE_MODEL_CONFIG_ID_KEY] ?? "";
+}
+
+export function useChatTitleModelConfigId(): string {
+    const { data: appMetadata } = useAppMetadata();
+    return appMetadata?.[CHAT_TITLE_MODEL_CONFIG_ID_KEY] ?? "";
+}
+
+export function useSetChatTitleModelConfigId() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationKey: ["setChatTitleModelConfigId"] as const,
+        mutationFn: async (modelConfigId: string) => {
+            await db.execute(
+                "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
+                [CHAT_TITLE_MODEL_CONFIG_ID_KEY, modelConfigId ?? ""],
             );
         },
         onSuccess: async () => {

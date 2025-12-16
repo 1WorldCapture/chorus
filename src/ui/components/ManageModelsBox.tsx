@@ -29,6 +29,7 @@ import {
     ArrowBigUpIcon,
     CircleCheckIcon,
     ChevronUpIcon,
+    ChevronDownIcon,
 } from "lucide-react";
 import { ProviderLogo } from "./ui/provider-logo";
 import {
@@ -135,6 +136,9 @@ function ModelGroup({
     groupId,
     isModelNotAllowedOverride,
     notAllowedButtonLabel = "Add API Key",
+    collapsible,
+    collapsed,
+    onToggleCollapsed,
 }: {
     heading: React.ReactNode;
     models: ModelConfig[];
@@ -147,6 +151,9 @@ function ModelGroup({
     groupId?: string;
     isModelNotAllowedOverride?: (model: ModelConfig) => boolean;
     notAllowedButtonLabel?: string;
+    collapsible?: boolean;
+    collapsed?: boolean;
+    onToggleCollapsed?: () => void;
 }) {
     const { data: apiKeys } = AppMetadataAPI.useApiKeys();
 
@@ -191,84 +198,114 @@ function ModelGroup({
         <CommandGroup
             heading={
                 <div className="flex items-center justify-between w-full">
-                    {heading}
+                    <div className="flex items-center gap-2">
+                        {collapsible && groupId && (
+                            <button
+                                type="button"
+                                className="p-1 hover:bg-accent rounded-md text-muted-foreground/70"
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    onToggleCollapsed?.();
+                                }}
+                                aria-label={
+                                    collapsed ? "Expand group" : "Collapse group"
+                                }
+                                title={
+                                    collapsed ? "Expand group" : "Collapse group"
+                                }
+                            >
+                                <ChevronDownIcon
+                                    className={`w-3 h-3 transition-transform ${
+                                        collapsed ? "-rotate-90" : ""
+                                    }`}
+                                />
+                            </button>
+                        )}
+                        {heading}
+                    </div>
                     {refreshButton}
                 </div>
             }
         >
-            {emptyState ||
-                models.map((m) => (
-                    <CommandItem
-                        key={m.id}
-                        value={groupId ? `${groupId}-${m.id}` : m.id}
-                        onSelect={() => {
-                            if (!isModelNotAllowed(m)) {
-                                onToggleModelConfig(m.id);
-                            } else {
-                                onAddApiKey();
-                            }
-                        }}
-                        disabled={
-                            !m.isEnabled ||
-                            (mode.type === "add" &&
-                                checkedModelConfigIds.includes(m.id))
-                        }
-                        className={`group ${isModelNotAllowed(m) ? "opacity-60" : ""}`}
-                    >
-                        <div className="flex items-center justify-between w-full">
-                            <div className="flex items-center gap-3">
-                                <ProviderLogo modelId={m.modelId} size="sm" />
-                                <div className="flex flex-col">
-                                    <div className="flex items-center gap-2">
-                                        <p>{m.displayName}</p>
-                                        {isNewModel(m.newUntil) && (
-                                            <Badge variant="secondary">
-                                                <p className="text-muted-foreground text-xs">
-                                                    NEW
-                                                </p>
-                                            </Badge>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                                {isModelNotAllowed(m) ? (
-                                    <Button
-                                        variant="link"
-                                        size="sm"
-                                        className="text-accent-foreground h-auto p-0 px-1.5"
-                                        onClick={(
-                                            e: React.MouseEvent<HTMLButtonElement>,
-                                        ) => {
-                                            e.stopPropagation();
-                                            onAddApiKey();
-                                        }}
-                                    >
-                                        {notAllowedButtonLabel}
-                                    </Button>
-                                ) : (
-                                    <>
-                                        <p className="text-sm text-muted-foreground opacity-0 group-data-[selected=true]:opacity-100 transition-opacity">
-                                            ⤶ to{" "}
-                                            {mode.type === "single"
-                                                ? "select"
-                                                : checkedModelConfigIds.includes(
-                                                        m.id,
-                                                    )
-                                                  ? "remove"
-                                                  : "add"}
-                                        </p>
-                                        {checkedModelConfigIds.includes(
-                                            m.id,
-                                        ) && (
-                                            <CircleCheckIcon className="!w-5 !h-5 ml-2 fill-primary text-primary-foreground" />
-                                        )}
-                                    </>
-                                )}
-                            </div>
-                        </div>
-                    </CommandItem>
-                ))}
+            {collapsed
+                ? null
+                : emptyState ||
+                  models.map((m) => (
+                      <CommandItem
+                          key={m.id}
+                          value={groupId ? `${groupId}-${m.id}` : m.id}
+                          onSelect={() => {
+                              if (!isModelNotAllowed(m)) {
+                                  onToggleModelConfig(m.id);
+                              } else {
+                                  onAddApiKey();
+                              }
+                          }}
+                          disabled={
+                              !m.isEnabled ||
+                              (mode.type === "add" &&
+                                  checkedModelConfigIds.includes(m.id))
+                          }
+                          className={`group ${isModelNotAllowed(m) ? "opacity-60" : ""}`}
+                      >
+                          <div className="flex items-center justify-between w-full">
+                              <div className="flex items-center gap-3">
+                                  <ProviderLogo
+                                      modelId={m.modelId}
+                                      size="sm"
+                                  />
+                                  <div className="flex flex-col">
+                                      <div className="flex items-center gap-2">
+                                          <p>{m.displayName}</p>
+                                          {isNewModel(m.newUntil) && (
+                                              <Badge variant="secondary">
+                                                  <p className="text-muted-foreground text-xs">
+                                                      NEW
+                                                  </p>
+                                              </Badge>
+                                          )}
+                                      </div>
+                                  </div>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                  {isModelNotAllowed(m) ? (
+                                      <Button
+                                          variant="link"
+                                          size="sm"
+                                          className="text-accent-foreground h-auto p-0 px-1.5"
+                                          onClick={(
+                                              e: React.MouseEvent<HTMLButtonElement>,
+                                          ) => {
+                                              e.stopPropagation();
+                                              onAddApiKey();
+                                          }}
+                                      >
+                                          {notAllowedButtonLabel}
+                                      </Button>
+                                  ) : (
+                                      <>
+                                          <p className="text-sm text-muted-foreground opacity-0 group-data-[selected=true]:opacity-100 transition-opacity">
+                                              ⤶ to{" "}
+                                              {mode.type === "single"
+                                                  ? "select"
+                                                  : checkedModelConfigIds.includes(
+                                                          m.id,
+                                                      )
+                                                    ? "remove"
+                                                    : "add"}
+                                          </p>
+                                          {checkedModelConfigIds.includes(
+                                              m.id,
+                                          ) && (
+                                              <CircleCheckIcon className="!w-5 !h-5 ml-2 fill-primary text-primary-foreground" />
+                                          )}
+                                      </>
+                                  )}
+                              </div>
+                          </div>
+                      </CommandItem>
+                  ))}
         </CommandGroup>
     );
 }
@@ -282,9 +319,11 @@ export const MANAGE_MODELS_COMPARE_INLINE_DIALOG_ID =
 export function ManageModelsBox({
     mode,
     id,
+    singleModeDefaultOptionLabel,
 }: {
     mode: ModelPickerMode;
     id: string; // Allow any string ID for flexibility
+    singleModeDefaultOptionLabel?: string;
 }) {
     const { data: apiKeys } = AppMetadataAPI.useApiKeys();
     const { data: customProviders = [] } = AppMetadataAPI.useCustomProviders();
@@ -335,6 +374,9 @@ export function ManageModelsBox({
     }, [mode, modelConfigs.data]);
 
     const [searchQuery, setSearchQuery] = useState("");
+    const [collapsedGroupIds, setCollapsedGroupIds] = useState<Set<string>>(
+        () => new Set(),
+    );
     const [spinningProviders, setSpinningProviders] = useState<
         Record<string, boolean>
     >({
@@ -358,6 +400,7 @@ export function ManageModelsBox({
     useEffect(() => {
         if (isDialogClosed) {
             setSearchQuery("");
+            setCollapsedGroupIds(new Set());
         }
     }, [isDialogClosed]);
 
@@ -652,6 +695,31 @@ export function ManageModelsBox({
                 <CommandList ref={listRef}>
                     <CommandEmpty>No models found</CommandEmpty>
 
+                    {mode.type === "single" &&
+                        singleModeDefaultOptionLabel && (
+                            <CommandGroup heading="Default">
+                                <CommandItem
+                                    value="__use_default__"
+                                    onSelect={() => {
+                                        mode.onSetModel("");
+                                        dialogActions.closeDialog();
+                                    }}
+                                >
+                                    <div className="flex items-center justify-between w-full">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-5 h-5 rounded-sm bg-muted flex items-center justify-center text-xs text-muted-foreground">
+                                                A
+                                            </div>
+                                            <p>{singleModeDefaultOptionLabel}</p>
+                                        </div>
+                                        {mode.selectedModelConfigId === "" && (
+                                            <CircleCheckIcon className="!w-5 !h-5 ml-2 fill-primary text-primary-foreground" />
+                                        )}
+                                    </div>
+                                </CommandItem>
+                            </CommandGroup>
+                        )}
+
                     {/* OpenRouter Models - main list */}
                     {(modelGroups.openrouter.length > 0 ||
                         searchQuery === "") && (
@@ -685,6 +753,19 @@ export function ManageModelsBox({
                             onToggleModelConfig={handleToggleModelConfig}
                             onAddApiKey={handleAddApiKey}
                             groupId="openrouter"
+                            collapsible
+                            collapsed={collapsedGroupIds.has("openrouter")}
+                            onToggleCollapsed={() => {
+                                setCollapsedGroupIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has("openrouter")) {
+                                        next.delete("openrouter");
+                                    } else {
+                                        next.add("openrouter");
+                                    }
+                                    return next;
+                                });
+                            }}
                             refreshButton={
                                 showOpenRouter && (
                                     <div className="flex items-center gap-1">
@@ -779,6 +860,22 @@ export function ManageModelsBox({
                             onToggleModelConfig={handleToggleModelConfig}
                             onAddApiKey={handleAddApiKey}
                             groupId={`custom-provider-${group.providerId}`}
+                            collapsible
+                            collapsed={collapsedGroupIds.has(
+                                `custom-provider-${group.providerId}`,
+                            )}
+                            onToggleCollapsed={() => {
+                                const id = `custom-provider-${group.providerId}`;
+                                setCollapsedGroupIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(id)) {
+                                        next.delete(id);
+                                    } else {
+                                        next.add(id);
+                                    }
+                                    return next;
+                                });
+                            }}
                             notAllowedButtonLabel="Configure"
                             isModelNotAllowedOverride={() => {
                                 const provider = group.provider;
@@ -844,6 +941,19 @@ export function ManageModelsBox({
                             onToggleModelConfig={handleToggleModelConfig}
                             onAddApiKey={handleAddApiKey}
                             groupId="custom"
+                            collapsible
+                            collapsed={collapsedGroupIds.has("custom")}
+                            onToggleCollapsed={() => {
+                                setCollapsedGroupIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has("custom")) {
+                                        next.delete("custom");
+                                    } else {
+                                        next.add("custom");
+                                    }
+                                    return next;
+                                });
+                            }}
                         />
                     )}
 
@@ -856,6 +966,19 @@ export function ManageModelsBox({
                         onToggleModelConfig={handleToggleModelConfig}
                         onAddApiKey={handleAddApiKey}
                         groupId="local"
+                        collapsible
+                        collapsed={collapsedGroupIds.has("local")}
+                        onToggleCollapsed={() => {
+                            setCollapsedGroupIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has("local")) {
+                                    next.delete("local");
+                                } else {
+                                    next.add("local");
+                                }
+                                return next;
+                            });
+                        }}
                         refreshButton={
                             <button
                                 onClick={(e) => {
