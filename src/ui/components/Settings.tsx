@@ -89,7 +89,10 @@ import * as AppMetadataAPI from "@core/chorus/api/AppMetadataAPI";
 import * as ModelsAPI from "@core/chorus/api/ModelsAPI";
 import { PermissionsTab } from "./PermissionsTab";
 import { cn } from "@ui/lib/utils";
-import { ManageModelsBox } from "./ManageModelsBox";
+import {
+    MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID,
+    ManageModelsBox,
+} from "./ManageModelsBox";
 import { ProviderLogo } from "./ui/provider-logo";
 
 type ToolsetFormProps = {
@@ -1169,6 +1172,8 @@ export default function Settings({ tab = "general" }: SettingsProps) {
     const modelConfigsQuery = ModelsAPI.useModelConfigs();
     const { data: quickChatModelConfig } =
         ModelsAPI.useSelectedModelConfigQuickChat();
+    const setQuickChatModelConfigIdMutation =
+        AppMetadataAPI.useSetQuickChatModelConfigId();
     const chatTitleModelConfigId = AppMetadataAPI.useChatTitleModelConfigId();
     const setChatTitleModelConfigIdMutation =
         AppMetadataAPI.useSetChatTitleModelConfigId();
@@ -1469,6 +1474,8 @@ export default function Settings({ tab = "general" }: SettingsProps) {
             ? `Use Ambient Chat model (default) — ${quickChatModelConfig.displayName}`
             : "Use Ambient Chat model (default)";
     }, [quickChatModelConfig]);
+    const ambientChatModelLabel =
+        quickChatModelConfig?.displayName ?? "Unavailable";
     const chatTitlePickerLabel = chatTitleModelConfigId
         ? (selectedChatTitleModelConfig?.displayName ??
           `Unavailable: ${chatTitleModelConfigId}`)
@@ -1832,6 +1839,47 @@ export default function Settings({ tab = "general" }: SettingsProps) {
                             <div className="space-y-4">
                                 <div>
                                     <label
+                                        htmlFor="ambient-chat-model-config-id"
+                                        className="block font-semibold mb-2"
+                                    >
+                                        Ambient Chat model
+                                    </label>
+                                    <button
+                                        id="ambient-chat-model-config-id"
+                                        type="button"
+                                        onClick={() => {
+                                            dialogActions.openDialog(
+                                                MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID,
+                                            );
+                                        }}
+                                        className={cn(
+                                            "flex w-full hover:bg-background/50 items-center justify-between rounded-md border border-input bg-background text-foreground px-3 py-2 ring-offset-background placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+                                            "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2 overflow-hidden">
+                                            {quickChatModelConfig ? (
+                                                <ProviderLogo
+                                                    modelId={
+                                                        quickChatModelConfig.modelId
+                                                    }
+                                                    size="sm"
+                                                />
+                                            ) : null}
+                                            <span className="truncate">
+                                                {ambientChatModelLabel}
+                                            </span>
+                                        </div>
+                                        <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
+                                    </button>
+
+                                    <p className="text-sm text-muted-foreground mt-2">
+                                        The model used for Ambient Chat.
+                                        Changes apply immediately.
+                                    </p>
+                                </div>
+                                <div>
+                                    <label
                                         htmlFor="chat-title-model-config-id"
                                         className="block font-semibold mb-2"
                                     >
@@ -2160,6 +2208,23 @@ export default function Settings({ tab = "general" }: SettingsProps) {
                     {content}
                 </DialogContent>
             </Dialog>
+            <ManageModelsBox
+                id={MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID}
+                mode={{
+                    type: "single",
+                    selectedModelConfigId: quickChatModelConfig?.id ?? "",
+                    onSetModel: (modelConfigId: string) => {
+                        void setQuickChatModelConfigIdMutation
+                            .mutateAsync(modelConfigId)
+                            .catch((error: unknown) => {
+                                console.error(error);
+                                toast.error(
+                                    "Failed to update Ambient Chat model",
+                                );
+                            });
+                    },
+                }}
+            />
             <ManageModelsBox
                 id={MANAGE_MODELS_CHAT_TITLE_DIALOG_ID}
                 mode={{

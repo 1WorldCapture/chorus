@@ -43,7 +43,6 @@ import { AttachmentPillsList } from "./AttachmentsViews";
 import * as Models from "@core/chorus/Models";
 import { invoke } from "@tauri-apps/api/core";
 import { ProviderLogo } from "@ui/components/ui/provider-logo";
-import { QuickChatModelSelector } from "./QuickChatModelSelector";
 import {
     Dialog,
     DialogContent,
@@ -93,8 +92,11 @@ import { SidebarTrigger } from "@ui/components/ui/sidebar";
 import { useSidebar } from "@ui/hooks/useSidebar";
 import { useShortcut } from "@ui/hooks/useShortcut";
 import { projectDisplayName, sendTauriNotification } from "@ui/lib/utils";
-import { useQuery } from "@tanstack/react-query";
-import { ManageModelsBox } from "./ManageModelsBox";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+    MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID,
+    ManageModelsBox,
+} from "./ManageModelsBox";
 import RepliesDrawer from "./RepliesDrawer";
 import useElementScrollDetection from "@ui/hooks/useScrollDetection";
 import { checkScreenRecordingPermission } from "tauri-plugin-macos-permissions-api";
@@ -1676,33 +1678,6 @@ const MessageSetView = memo(
     },
 );
 
-// ----------------------------------
-// Main Component
-// ----------------------------------
-
-function ModelSelectorWrapper() {
-    const modelConfigsQuery = ModelsAPI.useModelConfigs();
-    const updateSelectedModelConfigQuickChat =
-        MessageAPI.useUpdateSelectedModelConfigQuickChat();
-
-    const handleModelSelect = useCallback(
-        (modelId: string) => {
-            console.log("ModelSelector: selecting model", modelId);
-            const modelConfig = modelConfigsQuery.data?.find(
-                (m) => m.id === modelId,
-            );
-            if (modelConfig) {
-                updateSelectedModelConfigQuickChat.mutate({
-                    modelConfig,
-                });
-            }
-        },
-        [modelConfigsQuery, updateSelectedModelConfigQuickChat],
-    );
-
-    return <QuickChatModelSelector onModelSelect={handleModelSelect} />;
-}
-
 export const SHARE_CHAT_DIALOG_ID = "share-chat-dialog";
 
 export default function MultiChat() {
@@ -1735,6 +1710,7 @@ export default function MultiChat() {
     }, [navigate]);
 
     const { isQuickChatWindow } = useAppContext();
+    const queryClient = useQueryClient();
 
     const createQuickChat = ChatAPI.useGetOrCreateNewQuickChat();
     const projectsQuery = useQuery(ProjectAPI.projectQueries.list());
@@ -1743,6 +1719,10 @@ export default function MultiChat() {
 
     const regenerateProjectContextSummaries =
         ProjectAPI.useRegenerateProjectContextSummaries();
+    const { data: quickChatModelConfig } =
+        ModelsAPI.useSelectedModelConfigQuickChat();
+    const setQuickChatModelConfigIdMutation =
+        AppMetadataAPI.useSetQuickChatModelConfigId();
 
     // UI stuff
 
@@ -1851,6 +1831,15 @@ export default function MultiChat() {
     useEffect(() => {
         const handleFocus = () => {
             setWindowIsFocused(true);
+            if (isQuickChatWindow) {
+                // Force refresh of quick chat-specific data when the window gains focus
+                void queryClient.invalidateQueries({
+                    queryKey: ModelsAPI.modelConfigQueries.quickChat().queryKey,
+                });
+                void queryClient.invalidateQueries({
+                    queryKey: AppMetadataAPI.appMetadataKeys.appMetadata(),
+                });
+            }
         };
         const handleBlur = () => {
             setWindowIsFocused(false);
@@ -2162,9 +2151,31 @@ export default function MultiChat() {
                         <TooltipContent>Close (ESC)</TooltipContent>
                     </Tooltip>
                     {isQuickChatWindow && (
-                        <div className="text-sm inline-flex ml-2 items-center gap-1">
-                            <ModelSelectorWrapper />
-                        </div>
+                        <button
+                            type="button"
+                            onClick={() =>
+                                dialogActions.openDialog(
+                                    MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID,
+                                )
+                            }
+                            className="text-sm inline-flex ml-2 items-center gap-2 hover:bg-foreground/5 rounded-md px-2 py-1"
+                            tabIndex={-1}
+                        >
+                            {quickChatModelConfig ? (
+                                <>
+                                    <ProviderLogo
+                                        modelId={quickChatModelConfig.modelId}
+                                        size="sm"
+                                    />
+                                    <span className="truncate max-w-[180px]">
+                                        {quickChatModelConfig.displayName}
+                                    </span>
+                                </>
+                            ) : (
+                                <span>Select model</span>
+                            )}
+                            <ChevronDownIcon className="w-3 h-3 opacity-60" />
+                        </button>
                     )}
 
                     <div className="flex items-center gap-2 ml-auto text-sm font-[350]">
@@ -2569,6 +2580,22 @@ export default function MultiChat() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <ManageModelsBox
+                id={MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID}
+                mode={{
+                    type: "single",
+                    selectedModelConfigId: quickChatModelConfig?.id ?? "",
+                    onSetModel: (modelConfigId: string) => {
+                        void setQuickChatModelConfigIdMutation
+                            .mutateAsync(modelConfigId)
+                            .catch((error: unknown) => {
+                                console.error(error);
+                                toast.error("Failed to update Ambient Chat model");
+                            });
+                    },
+                }}
+            />
 
             <SummaryDialog
                 summary={summary || ""}

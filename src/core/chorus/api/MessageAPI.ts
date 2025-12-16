@@ -38,6 +38,7 @@ import {
     getApiKeys,
     getCustomProviders,
     getCustomBaseUrl,
+    AMBIENT_CHAT_SYSTEM_PROMPT_KEY,
 } from "./AppMetadataAPI";
 import { canProceedWithModelId } from "@core/utilities/ProxyUtils";
 import {
@@ -2508,7 +2509,19 @@ function usePopulateToolsBlock(chatId: string) {
 
             if (replyToModelId) {
                 // For replies, use only the model being replied to
-                const modelConfig = await fetchModelConfigById(replyToModelId);
+                const baseModelConfig = await fetchModelConfigById(
+                    replyToModelId,
+                );
+                const modelConfig =
+                    baseModelConfig && isQuickChatWindow
+                        ? applyAmbientChatOverlay({
+                              base: baseModelConfig,
+                              ambientPrompt: await getAmbientChatSystemPrompt(
+                                  queryClient,
+                              ),
+                          })
+                        : baseModelConfig;
+
                 if (!modelConfig) {
                     console.error(
                         `Model config not found for reply: ${replyToModelId}`,
@@ -3188,37 +3201,39 @@ export function useUpdateSelectedModelConfigsCompare() {
     });
 }
 
-// TODO-GC: remove after migration to GC
-export function useUpdateSelectedModelConfigQuickChat() {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationKey: ["updateSelectedModelConfigQuickChat"] as const,
-        mutationFn: async ({ modelConfig }: { modelConfig: ModelConfig }) => {
-            console.log("Updating quick chat model config to:", modelConfig.id);
-            await db.execute(
-                "UPDATE app_metadata SET value = ? WHERE key = 'quick_chat_model_config_id'",
-                [modelConfig.id],
-            );
+export function applyAmbientChatOverlay({
+    base,
+    ambientPrompt,
+}: {
+    base: ModelConfig;
+    ambientPrompt: string;
+}): ModelConfig {
+    const trimmedAmbient = ambientPrompt.trim();
+    const trimmedBasePrompt = (base.systemPrompt ?? "").trim();
+    const systemPrompt = [trimmedAmbient, trimmedBasePrompt]
+        .filter((prompt) => prompt.length > 0)
+        .join("\n\n");
 
-            // Return the model config for use in onSuccess
-            return modelConfig;
-        },
-        onSuccess: async (modelConfig) => {
-            // Invalidate both app metadata and the specific quick chat model config
-            await queryClient.invalidateQueries({
-                queryKey: appMetadataKeys.appMetadata(),
-            });
-
-            // Directly update the cache for the quick chat model config query
-            queryClient.setQueryData(
-                modelConfigQueries.quickChat().queryKey,
-                modelConfig,
-            );
-        },
-    });
+    return {
+        ...base,
+        systemPrompt,
+    };
 }
 
-// TODO-GC: remove after migration to GC
+async function getAmbientChatSystemPrompt(
+    queryClient: ReturnType<typeof useQueryClient>,
+) {
+    const appMetadata = await queryClient.ensureQueryData({
+        queryKey: appMetadataKeys.appMetadata(),
+        queryFn: fetchAppMetadata,
+    });
+
+    return (
+        appMetadata?.[AMBIENT_CHAT_SYSTEM_PROMPT_KEY] ??
+        Prompts.AMBIENT_CHAT_SYSTEM_PROMPT_DEFAULT
+    );
+}
+
 /**
  * Gets the selected model configs for the current chat type (quick chat or compare).
  */
@@ -3227,10 +3242,21 @@ export function useGetSelectedModelConfigs() {
 
     return async (isQuickChatWindow: boolean) => {
         if (isQuickChatWindow) {
-            const quickChatModelConfig = await queryClient.ensureQueryData(
-                modelConfigQueries.quickChat(),
-            );
-            return quickChatModelConfig ? [quickChatModelConfig] : [];
+            const [quickChatModelConfig, ambientPrompt] = await Promise.all([
+                queryClient.ensureQueryData(modelConfigQueries.quickChat()),
+                getAmbientChatSystemPrompt(queryClient),
+            ]);
+
+            if (!quickChatModelConfig) {
+                return [];
+            }
+
+            return [
+                applyAmbientChatOverlay({
+                    base: quickChatModelConfig,
+                    ambientPrompt,
+                }),
+            ];
         } else {
             return await queryClient.ensureQueryData(
                 modelConfigQueries.compare(),

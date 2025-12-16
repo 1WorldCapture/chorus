@@ -5,11 +5,14 @@ import {
     SettingsManager,
 } from "@core/utilities/Settings";
 import * as Models from "../Models";
+import { modelConfigQueries } from "./ModelsAPI";
 
 export const appMetadataKeys = {
     appMetadata: () => ["appMetadata"] as const,
 };
 
+export const AMBIENT_CHAT_SYSTEM_PROMPT_KEY = "ambient_chat_system_prompt";
+export const QUICK_CHAT_MODEL_CONFIG_ID_KEY = "quick_chat_model_config_id";
 const CHAT_TITLE_MODEL_CONFIG_ID_KEY = "chat_title_model_config_id";
 
 export async function fetchAppMetadata(): Promise<Record<string, string>> {
@@ -42,6 +45,11 @@ export function useAppMetadata() {
                 {} as Record<string, string>,
             ),
     });
+}
+
+export function useAmbientChatSystemPrompt() {
+    const { data: appMetadata } = useAppMetadata();
+    return appMetadata?.[AMBIENT_CHAT_SYSTEM_PROMPT_KEY] ?? "";
 }
 
 export function useSkipOnboarding() {
@@ -175,6 +183,25 @@ export function useSetVisionModeEnabled() {
             await queryClient.invalidateQueries({
                 queryKey: appMetadataKeys.appMetadata(),
             });
+        },
+    });
+}
+
+export function useSetQuickChatModelConfigId() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationKey: ["setQuickChatModelConfigId"] as const,
+        mutationFn: async (modelConfigId: string) => {
+            await db.execute(
+                "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
+                [QUICK_CHAT_MODEL_CONFIG_ID_KEY, modelConfigId],
+            );
+        },
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({
+                queryKey: appMetadataKeys.appMetadata(),
+            });
+            await queryClient.invalidateQueries(modelConfigQueries.quickChat());
         },
     });
 }

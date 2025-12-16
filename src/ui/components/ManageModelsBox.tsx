@@ -314,6 +314,7 @@ export const MANAGE_MODELS_CHAT_DIALOG_ID = "manage-models-chat";
 export const MANAGE_MODELS_COMPARE_DIALOG_ID = "manage-models-compare";
 export const MANAGE_MODELS_COMPARE_INLINE_DIALOG_ID =
     "manage-models-compare-inline"; // dialog for the inline add model button
+export const MANAGE_MODELS_AMBIENT_CHAT_DIALOG_ID = "manage-models-ambient-chat";
 
 /** Main component that handles all model grouping and UI. */
 export function ManageModelsBox({

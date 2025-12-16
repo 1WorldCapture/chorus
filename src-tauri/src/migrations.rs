@@ -2467,5 +2467,151 @@ You have full access to bash commands on the user''''s computer. If you write a 
                     ('chat_title_model_config_id', '');
             "#,
         },
+        Migration {
+            version: 133,
+            description: "add ambient chat prompt metadata and remove legacy ambient configs",
+            kind: MigrationKind::Up,
+            sql: r#"
+                -- Default ambient chat prompt
+                INSERT OR IGNORE INTO app_metadata (key, value) VALUES ('ambient_chat_system_prompt', 'Respond concisely. Use one or two sentences if possible.
+
+If you see a screenshot, it means the system has automatically attached a screenshot showing the current user''s computer screen. Use these screenshots as needed to help answer the user''s questions. There''s no need to describe the screenshot or comment on it unless it relates to the user''s question.
+
+If you cannot see a screenshot, it means the user has disabled vision mode, and if they ask something that requires a screenshot, you should ask them to enable vision mode.
+
+You have full access to bash commands on the user''s computer. If you write a bash command in a ```sh markdown block, the user will be able to click ''run'' to quickly execute the command. Use this to help answer questions or perform tasks if it''s relevant. Assume a MacOS environment.');
+
+                -- Preserve ambient prompt customizations from legacy configs when selected
+                UPDATE app_metadata
+                SET value = (
+                    SELECT system_prompt FROM model_configs WHERE id = 'google::ambient-gemini-2.5-pro-preview-03-25'
+                )
+                WHERE key = 'ambient_chat_system_prompt'
+                  AND EXISTS (
+                      SELECT 1 FROM app_metadata
+                      WHERE key = 'quick_chat_model_config_id'
+                        AND value = 'google::ambient-gemini-2.5-pro-preview-03-25'
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM model_configs WHERE id = 'google::ambient-gemini-2.5-pro-preview-03-25'
+                  );
+
+                UPDATE app_metadata
+                SET value = (
+                    SELECT system_prompt FROM model_configs WHERE id = '24711c64-725c-4bdd-b5eb-65fe1dbfcde8'
+                )
+                WHERE key = 'ambient_chat_system_prompt'
+                  AND EXISTS (
+                      SELECT 1 FROM app_metadata
+                      WHERE key = 'quick_chat_model_config_id'
+                        AND value = '24711c64-725c-4bdd-b5eb-65fe1dbfcde8'
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM model_configs WHERE id = '24711c64-725c-4bdd-b5eb-65fe1dbfcde8'
+                  );
+
+                -- If no prompt is set, prefer any existing legacy ambient prompt (Gemini first)
+                UPDATE app_metadata
+                SET value = (
+                    SELECT system_prompt FROM model_configs WHERE id = 'google::ambient-gemini-2.5-pro-preview-03-25'
+                )
+                WHERE key = 'ambient_chat_system_prompt'
+                  AND (value IS NULL OR value = '' OR value = 'Respond concisely. Use one or two sentences if possible.
+
+If you see a screenshot, it means the system has automatically attached a screenshot showing the current user''s computer screen. Use these screenshots as needed to help answer the user''s questions. There''s no need to describe the screenshot or comment on it unless it relates to the user''s question.
+
+If you cannot see a screenshot, it means the user has disabled vision mode, and if they ask something that requires a screenshot, you should ask them to enable vision mode.
+
+You have full access to bash commands on the user''s computer. If you write a bash command in a ```sh markdown block, the user will be able to click ''run'' to quickly execute the command. Use this to help answer questions or perform tasks if it''s relevant. Assume a MacOS environment.')
+                  AND EXISTS (
+                      SELECT 1 FROM model_configs WHERE id = 'google::ambient-gemini-2.5-pro-preview-03-25'
+                  );
+
+                UPDATE app_metadata
+                SET value = (
+                    SELECT system_prompt FROM model_configs WHERE id = '24711c64-725c-4bdd-b5eb-65fe1dbfcde8'
+                )
+                WHERE key = 'ambient_chat_system_prompt'
+                  AND (value IS NULL OR value = '' OR value = 'Respond concisely. Use one or two sentences if possible.
+
+If you see a screenshot, it means the system has automatically attached a screenshot showing the current user''s computer screen. Use these screenshots as needed to help answer the user''s questions. There''s no need to describe the screenshot or comment on it unless it relates to the user''s question.
+
+If you cannot see a screenshot, it means the user has disabled vision mode, and if they ask something that requires a screenshot, you should ask them to enable vision mode.
+
+You have full access to bash commands on the user''s computer. If you write a bash command in a ```sh markdown block, the user will be able to click ''run'' to quickly execute the command. Use this to help answer questions or perform tasks if it''s relevant. Assume a MacOS environment.')
+                  AND EXISTS (
+                      SELECT 1 FROM model_configs WHERE id = '24711c64-725c-4bdd-b5eb-65fe1dbfcde8'
+                  );
+
+                -- Remap stored model config references away from legacy ambient configs
+                UPDATE app_metadata
+                SET value = 'anthropic::claude-3-5-sonnet-latest'
+                WHERE key IN ('quick_chat_model_config_id', 'chat_title_model_config_id', 'selected_model_config_chat')
+                  AND value = '24711c64-725c-4bdd-b5eb-65fe1dbfcde8';
+
+                UPDATE app_metadata
+                SET value = 'google::gemini-2.5-pro-preview-03-25'
+                WHERE key IN ('quick_chat_model_config_id', 'chat_title_model_config_id', 'selected_model_config_chat')
+                  AND value = 'google::ambient-gemini-2.5-pro-preview-03-25';
+
+                UPDATE app_metadata
+                SET value = (
+                    SELECT json_group_array(new_value)
+                    FROM (
+                        SELECT
+                            CASE
+                                WHEN value = '24711c64-725c-4bdd-b5eb-65fe1dbfcde8' THEN 'anthropic::claude-3-5-sonnet-latest'
+                                WHEN value = 'google::ambient-gemini-2.5-pro-preview-03-25' THEN 'google::gemini-2.5-pro-preview-03-25'
+                                ELSE value
+                            END AS new_value,
+                            json_each.key AS original_order
+                        FROM json_each(app_metadata.value)
+                        ORDER BY original_order
+                    )
+                )
+                WHERE key = 'selected_model_configs_compare'
+                  AND json_valid(value)
+                  AND EXISTS (
+                      SELECT 1 FROM json_each(app_metadata.value)
+                      WHERE value IN ('24711c64-725c-4bdd-b5eb-65fe1dbfcde8', 'google::ambient-gemini-2.5-pro-preview-03-25')
+                  );
+
+                UPDATE saved_model_configs_chats
+                SET model_ids = (
+                    SELECT json_group_array(new_value)
+                    FROM (
+                        SELECT
+                            CASE
+                                WHEN value = '24711c64-725c-4bdd-b5eb-65fe1dbfcde8' THEN 'anthropic::claude-3-5-sonnet-latest'
+                                WHEN value = 'google::ambient-gemini-2.5-pro-preview-03-25' THEN 'google::gemini-2.5-pro-preview-03-25'
+                                ELSE value
+                            END AS new_value,
+                            json_each.key AS original_order
+                        FROM json_each(saved_model_configs_chats.model_ids)
+                        ORDER BY original_order
+                    )
+                )
+                WHERE json_valid(model_ids)
+                  AND EXISTS (
+                      SELECT 1 FROM json_each(saved_model_configs_chats.model_ids)
+                      WHERE value IN ('24711c64-725c-4bdd-b5eb-65fe1dbfcde8', 'google::ambient-gemini-2.5-pro-preview-03-25')
+                  );
+
+                UPDATE messages
+                SET model = CASE
+                    WHEN model = '24711c64-725c-4bdd-b5eb-65fe1dbfcde8' THEN 'anthropic::claude-3-5-sonnet-latest'
+                    WHEN model = 'google::ambient-gemini-2.5-pro-preview-03-25' THEN 'google::gemini-2.5-pro-preview-03-25'
+                    ELSE model
+                END
+                WHERE model IN ('24711c64-725c-4bdd-b5eb-65fe1dbfcde8', 'google::ambient-gemini-2.5-pro-preview-03-25');
+
+                -- Remove legacy ambient configs
+                DELETE FROM model_configs
+                WHERE id IN (
+                    '24711c64-725c-4bdd-b5eb-65fe1dbfcde8',
+                    'google::ambient-gemini-2.5-pro-preview-03-25'
+                );
+            "#,
+        },
     ];
 }
